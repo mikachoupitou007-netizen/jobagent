@@ -3,6 +3,14 @@
 
 console.log('[JobAgent BG] background.js loaded')
 
+// BUG 4 — keepalive alarm prevents service worker from going dormant
+chrome.runtime.onInstalled.addListener(() => {
+  chrome.alarms.create('keepalive', { periodInMinutes: 0.33 }) // ~20 seconds
+})
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'keepalive') console.log('[JobAgent BG] keepalive ping')
+})
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('[JobAgent BG] Message received:', message.type)
   if (message.type === 'CALL_ANTHROPIC') {

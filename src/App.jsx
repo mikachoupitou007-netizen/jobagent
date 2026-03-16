@@ -164,7 +164,7 @@ const NAV = [
 
 export default function App() {
   const [tab, setTab]           = useState('dashboard')
-  const [apps, setApps]         = useState(INIT_APPS)
+  const [apps, setApps]         = useState(() => { try { const s = localStorage.getItem('jobagent_tracker'); return s ? JSON.parse(s) : INIT_APPS } catch { return INIT_APPS } })
   const [showForm, setShowForm] = useState(false)
   const today = new Date().toISOString().slice(0, 10)
   const [newApp, setNewApp]     = useState({ company: '', role: '', date: today, status: 'Applied', notes: '', url: '' })
@@ -186,7 +186,15 @@ export default function App() {
   const [replyDrafts, setReplyDrafts]     = useState({})
   const [replyLoading, setReplyLoading]   = useState({})
   const [openEmail, setOpenEmail]         = useState(null)
-  const [user, setUser]                   = useState(null)
+  const [user, setUser]                   = useState(() => {
+    try {
+      const stored = localStorage.getItem('jobagent_user')
+      if (!stored) return null
+      const { data, timestamp } = JSON.parse(stored)
+      if (Date.now() - timestamp > 24 * 60 * 60 * 1000) { localStorage.removeItem('jobagent_user'); return null }
+      return data
+    } catch { return null }
+  })
   const [loginErr, setLoginErr]           = useState('')
   const [config, setConfig]               = useState(null)
   const [draft, setDraft]                 = useState({ ...DEFAULT_CONFIG })
@@ -210,6 +218,11 @@ export default function App() {
     s.async = true
     document.head.appendChild(s)
   }, [])
+
+  // BUG 2 — persist tracker to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('jobagent_tracker', JSON.stringify(apps))
+  }, [apps])
 
   // Read URL params injected by the Chrome extension "Log to Tracker" button
   useEffect(() => {
@@ -249,7 +262,9 @@ export default function App() {
             headers: { Authorization: 'Bearer ' + tokenResponse.access_token }
           })
           const u = await r.json()
-          setUser({ name: u.name, email: u.email, avatar: u.picture, id: u.sub })
+          const userData = { name: u.name, email: u.email, avatar: u.picture, id: u.sub }
+          setUser(userData)
+          localStorage.setItem('jobagent_user', JSON.stringify({ data: userData, timestamp: Date.now() }))
           try {
             const fromCookie = readCfgCookie(u.sub)
             const fromStorage = (() => { try { const s = localStorage.getItem(`jobagent_config_${u.sub}`); return s ? JSON.parse(s) : null } catch { return null } })()
@@ -264,6 +279,7 @@ export default function App() {
 
   const signOut = () => {
     setUser(null)
+    localStorage.removeItem('jobagent_user')
     setGmailToken(null); setGmailUser(null); setGmailEmails([])
   }
 
@@ -326,6 +342,7 @@ Score matchScore 0-100 based on: role seniority match, sector relevance, languag
           'Content-Type': 'application/json',
           'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
           'anthropic-version': '2023-06-01',
+          'anthropic-dangerous-direct-browser-access': 'true',
         },
         body: JSON.stringify({
           model: 'claude-sonnet-4-20250514',
@@ -334,12 +351,17 @@ Score matchScore 0-100 based on: role seniority match, sector relevance, languag
           messages: [{ role: 'user', content: prompt }],
         }),
       })
+      if (!res.ok) {
+        const errBody = await res.text()
+        throw new Error(`API ${res.status}: ${errBody}`)
+      }
       const d = await res.json()
-      // Extract text from the last content block (after tool use)
+      // Extract text from the last content block (after tool use blocks)
       const textBlock = [...(d.content || [])].reverse().find(b => b.type === 'text')
-      if (!textBlock?.text) throw new Error(d.error?.message || 'No results returned')
+      if (!textBlock?.text) throw new Error(d.error?.message || 'No text block in response — check API key and model access')
       const raw = textBlock.text.replace(/```json|```/g, '').trim()
-      const jobs = JSON.parse(raw)
+      let jobs
+      try { jobs = JSON.parse(raw) } catch { throw new Error('Response was not valid JSON: ' + raw.slice(0, 120)) }
       const scannedAt = new Date().toISOString()
       setIntelJobs(jobs)
       setIntelScannedAt(scannedAt)

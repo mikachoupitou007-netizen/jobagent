@@ -3,7 +3,7 @@
   "name": "JobAgent",
   "version": "1.0.0",
   "description": "AI-powered job application assistant for Michael Van Gyseghem",
-  "permissions": ["activeTab", "storage", "scripting"],
+  "permissions": ["activeTab", "storage", "scripting", "alarms"],
   "host_permissions": [
     "<all_urls>",
     "https://api.anthropic.com/",

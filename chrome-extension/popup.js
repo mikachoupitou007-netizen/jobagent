@@ -229,8 +229,17 @@ function logJob(job) {
     url:     j.url || '',
   })
   const dashboardUrl = `https://jobagent-mika.vercel.app/?${params.toString()}`
-  chrome.tabs.create({ url: dashboardUrl })
-  showResult('<p class="success">✓ Opening JobAgent dashboard to log this job…</p>')
+
+  // Reuse existing dashboard tab if already open, otherwise open new one
+  chrome.tabs.query({ url: 'https://jobagent-mika.vercel.app/*' }, (tabs) => {
+    if (tabs.length > 0) {
+      chrome.tabs.update(tabs[0].id, { url: dashboardUrl, active: true })
+      chrome.windows.update(tabs[0].windowId, { focused: true })
+    } else {
+      chrome.tabs.create({ url: dashboardUrl })
+    }
+  })
+  showResult('<p class="success">✓ Logging to JobAgent dashboard…</p>')
 }
 
 
