@@ -152,13 +152,14 @@ const C = {
 }
 
 const NAV = [
-  { id: 'dashboard', label: 'Dashboard',      icon: '▣' },
-  { id: 'analyser',  label: 'JD Analyser',    icon: '◈' },
-  { id: 'tracker',   label: 'Applications',   icon: '◉' },
-  { id: 'interview', label: 'Interview Prep', icon: '◎' },
-  { id: 'profile',   label: 'My Profile',     icon: '◍' },
-  { id: 'gmail',     label: 'Gmail Agent',    icon: '✉' },
-  { id: 'settings',  label: 'Settings',       icon: '⚙' },
+  { id: 'dashboard',     label: 'Dashboard',      icon: '▣' },
+  { id: 'analyser',      label: 'JD Analyser',    icon: '◈' },
+  { id: 'tracker',       label: 'Applications',   icon: '◉' },
+  { id: 'intelligence',  label: 'Intelligence',   icon: '◎' },
+  { id: 'interview',     label: 'Interview Prep', icon: '◇' },
+  { id: 'profile',       label: 'My Profile',     icon: '◍' },
+  { id: 'gmail',         label: 'Gmail Agent',    icon: '✉' },
+  { id: 'settings',      label: 'Settings',       icon: '⚙' },
 ]
 
 export default function App() {
@@ -192,6 +193,10 @@ export default function App() {
   const [wizardStep, setWizardStep]       = useState(1)
   const [wInput, setWInput]               = useState({ title: '', industry: '', location: '', keyword: '' })
   const [toast, setToast]                 = useState(null)
+  const [intelJobs, setIntelJobs]         = useState(() => { try { const s = localStorage.getItem('jobagent_intelligence'); return s ? JSON.parse(s).jobs : [] } catch { return [] } })
+  const [intelScannedAt, setIntelScannedAt] = useState(() => { try { const s = localStorage.getItem('jobagent_intelligence'); return s ? JSON.parse(s).scannedAt : null } catch { return null } })
+  const [intelLoading, setIntelLoading]   = useState(false)
+  const [intelErr, setIntelErr]           = useState('')
 
   const showToast = (msg) => {
     setToast(msg)
@@ -290,6 +295,73 @@ export default function App() {
   }
   const updStatus = (id, s) => setApps(p => p.map(a => a.id === id ? { ...a, status: s } : a))
   const delApp    = (id)    => setApps(p => p.filter(a => a.id !== id))
+
+  const scanIntelligence = async () => {
+    setIntelLoading(true); setIntelErr('')
+    try {
+      const prompt = `You are a job market intelligence agent for Michael Van Gyseghem — a Strategic Sales & Business Development leader with 8+ years B2B experience in fintech, real estate, SaaS, and franchise development. He is based in Brussels/Belgium and open to European roles. He speaks English C2, Dutch C2, French C1, German B2.
+
+Search the web right now for 8 real, currently open job listings that match his profile. Target roles: Sales Director, Business Development Manager, Strategic Account Executive, Customer Success Manager, Head of Sales, Commercial Director, Partnerships Manager. Target sectors: SaaS/Tech, Fintech, Real Estate, Consulting, Scale-ups. Target locations: Belgium, Netherlands, Luxembourg, Remote/Europe.
+
+Return ONLY a valid JSON array, no markdown, no preamble:
+[
+  {
+    "title": "exact job title",
+    "company": "company name",
+    "location": "city, country",
+    "matchScore": 82,
+    "salaryRange": "€80k–€110k" or "Not specified",
+    "postedDate": "YYYY-MM-DD or approximate",
+    "applyUrl": "direct URL to job posting",
+    "matchReason": "1 sentence explaining why this fits Michael specifically",
+    "keyRequirements": ["requirement 1", "requirement 2", "requirement 3"]
+  }
+]
+
+Score matchScore 0-100 based on: role seniority match, sector relevance, language requirements, location fit, B2B sales experience alignment.`
+
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4000,
+          tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+          messages: [{ role: 'user', content: prompt }],
+        }),
+      })
+      const d = await res.json()
+      // Extract text from the last content block (after tool use)
+      const textBlock = [...(d.content || [])].reverse().find(b => b.type === 'text')
+      if (!textBlock?.text) throw new Error(d.error?.message || 'No results returned')
+      const raw = textBlock.text.replace(/```json|```/g, '').trim()
+      const jobs = JSON.parse(raw)
+      const scannedAt = new Date().toISOString()
+      setIntelJobs(jobs)
+      setIntelScannedAt(scannedAt)
+      localStorage.setItem('jobagent_intelligence', JSON.stringify({ jobs, scannedAt }))
+    } catch (e) { setIntelErr('Scan failed: ' + e.message) }
+    setIntelLoading(false)
+  }
+
+  const intelSkillFreq = (jobs) => {
+    const freq = {}
+    jobs.forEach(j => (j.keyRequirements || []).forEach(r => { freq[r] = (freq[r] || 0) + 1 }))
+    return Object.entries(freq).sort((a, b) => b[1] - a[1]).slice(0, 5)
+  }
+
+  const intelDigest = (jobs) => {
+    const top = jobs.filter(j => j.matchScore >= 60).slice(0, 3)
+    if (!top.length) return
+    const body = top.map((j, i) => `${i + 1}. ${j.title} at ${j.company} (${j.location}) — ${j.matchScore}% match\n   ${j.matchReason}\n   Apply: ${j.applyUrl}`).join('\n\n')
+    const subject = `JobAgent Daily Digest — ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`
+    const mailto = `mailto:michael.vangyseghem@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent('Your top matches today:\n\n' + body)}`
+    window.open(mailto)
+  }
 
   const analyseJD = async () => {
     if (!jd.trim()) return
@@ -1040,6 +1112,122 @@ export default function App() {
               )}
             </div>
           )}
+
+          {/* ── INTELLIGENCE ── */}
+          {tab === 'intelligence' && (() => {
+            const skills = intelSkillFreq(intelJobs)
+            const maxFreq = skills[0]?.[1] || 1
+            return (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24 }}>
+                  <div>
+                    <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.5px', marginBottom: 4 }}>Job Market <span style={gT}>Intelligence</span></h1>
+                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.36)' }}>
+                      {intelScannedAt ? `Last scanned ${new Date(intelScannedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : 'Never scanned — run your first scan below.'}
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {intelJobs.length > 0 && (
+                      <button onClick={() => intelDigest(intelJobs)} style={{ ...C.ghost, fontSize: 12, display: 'flex', alignItems: 'center', gap: 6 }}>✉ Daily Digest</button>
+                    )}
+                    <button onClick={scanIntelligence} disabled={intelLoading} style={{ ...C.btn, fontSize: 12, opacity: intelLoading ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: 7, minWidth: 130 }}>
+                      {intelLoading ? <><span style={{ display: 'inline-block', animation: 'spin 0.8s linear infinite' }}>↻</span> Scanning…</> : '◎ Scan Now'}
+                    </button>
+                  </div>
+                </div>
+
+                {intelErr && <div style={{ color: '#F87171', fontSize: 12, marginBottom: 16, padding: '10px 14px', background: 'rgba(248,113,113,0.08)', borderRadius: 8, border: '1px solid rgba(248,113,113,0.2)' }}>{intelErr}</div>}
+
+                {intelLoading && (
+                  <div style={{ ...C.card, textAlign: 'center', padding: 48 }}>
+                    <div style={{ fontSize: 28, marginBottom: 12, animation: 'spin 1.2s linear infinite', display: 'inline-block' }}>◎</div>
+                    <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)' }}>Searching the web for live job listings…</div>
+                  </div>
+                )}
+
+                {!intelLoading && intelJobs.length > 0 && (
+                  <>
+                    {/* ── Job cards ── */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 32 }}>
+                      {intelJobs.map((job, i) => {
+                        const score = job.matchScore || 0
+                        const glow = score >= 70 ? '0 0 0 1px rgba(52,211,153,0.5), 0 0 16px rgba(52,211,153,0.08)'
+                                   : score >= 40 ? '0 0 0 1px rgba(251,191,36,0.4), 0 0 16px rgba(251,191,36,0.06)'
+                                   : '0 0 0 1px rgba(255,255,255,0.07)'
+                        const scoreColor = score >= 70 ? '#34D399' : score >= 40 ? '#FBBF24' : 'rgba(255,255,255,0.35)'
+                        return (
+                          <div key={i} style={{ ...C.card, boxShadow: glow, padding: '18px 20px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                              <div style={{ flex: 1 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                                  <span style={{ fontSize: 15, fontWeight: 700, letterSpacing: '-0.3px' }}>{job.title}</span>
+                                </div>
+                                <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.55)', marginBottom: 8 }}>
+                                  {job.company} · {job.location}
+                                  {job.salaryRange && job.salaryRange !== 'Not specified' && <span style={{ marginLeft: 8, color: '#C4B5FD' }}>{job.salaryRange}</span>}
+                                  {job.postedDate && <span style={{ marginLeft: 8, color: 'rgba(255,255,255,0.28)' }}>Posted {job.postedDate}</span>}
+                                </div>
+                                <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6, marginBottom: 10 }}>{job.matchReason}</div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                                  {(job.keyRequirements || []).map((r, ri) => (
+                                    <span key={ri} style={{ fontSize: 10, padding: '2px 8px', borderRadius: 20, background: 'rgba(124,58,237,0.15)', border: '1px solid rgba(124,58,237,0.25)', color: '#C4B5FD' }}>{r}</span>
+                                  ))}
+                                </div>
+                              </div>
+                              <div style={{ textAlign: 'center', flexShrink: 0 }}>
+                                <div style={{ fontSize: 28, fontWeight: 800, color: scoreColor, lineHeight: 1 }}>{score}<span style={{ fontSize: 14 }}>%</span></div>
+                                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', marginTop: 2, letterSpacing: 0.8 }}>MATCH</div>
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: 7, marginTop: 14, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 14 }}>
+                              <button onClick={() => { setJd(`${job.title} at ${job.company}\n${job.location}\n\n${(job.keyRequirements || []).join(', ')}\n\n${job.matchReason}`); setTab('analyser') }} style={{ ...C.ghost, fontSize: 11, padding: '6px 14px' }}>◈ Analyse</button>
+                              <button onClick={() => { setApps(p => p.some(a => a.url === job.applyUrl) ? p : [{ id: Date.now(), company: job.company, role: job.title, date: today, status: 'Applied', notes: '', url: job.applyUrl || '' }, ...p]); showToast(`✓ "${job.title}" logged to tracker`) }} style={{ ...C.ghost, fontSize: 11, padding: '6px 14px' }}>◉ Log</button>
+                              {job.applyUrl && <button onClick={() => window.open(job.applyUrl, '_blank')} style={{ ...C.btn, fontSize: 11, padding: '6px 14px' }}>Apply →</button>}
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+
+                    {/* ── Market Trends ── */}
+                    {skills.length > 0 && (
+                      <div style={{ ...C.card }}>
+                        <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 16 }}>Top Requested Skills</div>
+                        <svg width="100%" height={skills.length * 36} style={{ overflow: 'visible' }}>
+                          {skills.map(([skill, count], i) => {
+                            const barW = `${Math.round((count / maxFreq) * 72)}%`
+                            const y = i * 36
+                            return (
+                              <g key={skill}>
+                                <text x="0" y={y + 14} fill="rgba(255,255,255,0.65)" fontSize="12" fontFamily="system-ui">{skill}</text>
+                                <rect x="0" y={y + 20} width={barW} height="8" rx="4" fill="url(#ig)" />
+                                <text x={barW} y={y + 28} dx="6" fill="rgba(255,255,255,0.35)" fontSize="10" fontFamily="system-ui">{count}×</text>
+                              </g>
+                            )
+                          })}
+                          <defs>
+                            <linearGradient id="ig" x1="0%" y1="0%" x2="100%" y2="0%">
+                              <stop offset="0%" stopColor="#7C3AED" />
+                              <stop offset="50%" stopColor="#DB2777" />
+                              <stop offset="100%" stopColor="#F97316" />
+                            </linearGradient>
+                          </defs>
+                        </svg>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {!intelLoading && intelJobs.length === 0 && !intelErr && (
+                  <div style={{ ...C.card, textAlign: 'center', padding: 56 }}>
+                    <div style={{ fontSize: 36, marginBottom: 12 }}>◎</div>
+                    <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>No results yet</div>
+                    <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.36)' }}>Click Scan Now to search for live job matches using AI + web search.</div>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
 
           {/* ── SETTINGS ── */}
           {tab === 'settings' && (() => {
