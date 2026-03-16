@@ -186,18 +186,11 @@ export default function App() {
   const [replyDrafts, setReplyDrafts]     = useState({})
   const [replyLoading, setReplyLoading]   = useState({})
   const [openEmail, setOpenEmail]         = useState(null)
-  const [user, setUser]                   = useState(() => {
-    try {
-      const stored = localStorage.getItem('jobagent_user')
-      if (!stored) return null
-      const { data, timestamp } = JSON.parse(stored)
-      if (Date.now() - timestamp > 24 * 60 * 60 * 1000) { localStorage.removeItem('jobagent_user'); return null }
-      return data
-    } catch { return null }
-  })
+  const [user, setUser]                   = useState(null)
   const [loginErr, setLoginErr]           = useState('')
   const [config, setConfig]               = useState(null)
   const [draft, setDraft]                 = useState({ ...DEFAULT_CONFIG })
+  const [initialising, setInitialising]   = useState(true)
   const [wizardStep, setWizardStep]       = useState(1)
   const [wInput, setWInput]               = useState({ title: '', industry: '', location: '', keyword: '' })
   const [toast, setToast]                 = useState(null)
@@ -217,6 +210,28 @@ export default function App() {
     s.src = 'https://accounts.google.com/gsi/client'
     s.async = true
     document.head.appendChild(s)
+  }, [])
+
+  // BUG 1 & 3 — restore user + config synchronously on mount before any render
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('jobagent_user')
+      if (stored) {
+        const { data, timestamp } = JSON.parse(stored)
+        if (Date.now() - timestamp <= 24 * 60 * 60 * 1000) {
+          setUser(data)
+          // Look up config immediately using the restored user ID — prevents wizard flash
+          const fromCookie = readCfgCookie(data.id)
+          const raw = localStorage.getItem(`jobagent_config_${data.id}`)
+          const fromStorage = raw ? JSON.parse(raw) : null
+          const cfg = fromCookie ?? fromStorage
+          if (cfg) { setConfig(cfg); setDraft({ ...DEFAULT_CONFIG, ...cfg }) }
+        } else {
+          localStorage.removeItem('jobagent_user')
+        }
+      }
+    } catch { localStorage.removeItem('jobagent_user') }
+    setInitialising(false)
   }, [])
 
   // BUG 2 — persist tracker to localStorage whenever it changes
@@ -484,6 +499,15 @@ Score matchScore 0-100 based on: role seniority match, sector relevance, languag
     } catch (e) { setReplyDrafts(p => ({ ...p, [id]: 'Failed to generate reply.' })) }
     setReplyLoading(p => ({ ...p, [id]: false }))
   }
+
+  if (initialising) return (
+    <div style={{ minHeight: '100vh', background: '#07070F', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Sora', system-ui, sans-serif" }}>
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ width: 52, height: 52, borderRadius: 15, background: G, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 800, color: 'white', margin: '0 auto 16px' }}>J</div>
+        <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.25)' }}>Loading…</div>
+      </div>
+    </div>
+  )
 
   if (!user) return (
     <div style={{ minHeight: '100vh', background: '#07070F', color: '#E8E8F4', fontFamily: "'Sora', system-ui, sans-serif", display: 'flex', alignItems: 'center', justifyContent: 'center' }}>

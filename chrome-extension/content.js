@@ -232,44 +232,43 @@ function extract() {
 }
 
 
-// ── LinkedIn deferred extraction (waits for React render) ─────────────────────
+// ── LinkedIn deferred extraction — debounced MutationObserver ─────────────────
 function waitForLinkedIn() {
-  console.log('[JobAgent] LinkedIn — waiting for React render (MutationObserver + 500ms poll, max 10s)...')
+  console.log('[JobAgent] LinkedIn — setting up debounced MutationObserver')
 
-  const maxAttempts = 20  // 20 × 500ms = 10s
-  let attempts = 0
   let done = false
+  let debounceTimer = null
+  const DEBOUNCE_MS = 800
+  const TIMEOUT_MS  = 15000
+  const startTime   = Date.now()
 
-  function runExtraction(reason) {
+  function attemptExtraction(reason) {
     if (done) return
-    done = true
-    observer.disconnect()
-    clearInterval(poll)
-    console.log('[JobAgent] LinkedIn — triggering extraction, reason:', reason)
     const job = extract()
-    chrome.storage.local.set({ jobagent_current_job: job })
-    console.log('[JobAgent] LinkedIn — stored to jobagent_current_job, detected:', job.detected)
-  }
-
-  function check() {
-    const h1 = document.querySelector('h1')
-    if (h1?.innerText?.trim()) {
-      runExtraction('h1 found after ~' + (attempts * 500) + 'ms')
+    if (job.title && job.company) {
+      done = true
+      observer.disconnect()
+      clearTimeout(debounceTimer)
+      console.log('[JobAgent] LinkedIn — extraction complete, reason:', reason)
+      chrome.storage.local.set({ jobagent_current_job: job })
+      console.log('[JobAgent] LinkedIn — stored to jobagent_current_job, detected:', job.detected)
+    } else if (Date.now() - startTime >= TIMEOUT_MS) {
+      done = true
+      observer.disconnect()
+      clearTimeout(debounceTimer)
+      console.log('[JobAgent] LinkedIn — timeout, storing best result available')
+      chrome.storage.local.set({ jobagent_current_job: job })
     }
   }
 
-  // MutationObserver fires immediately on any DOM change
-  const observer = new MutationObserver(check)
+  const observer = new MutationObserver(() => {
+    clearTimeout(debounceTimer)
+    debounceTimer = setTimeout(() => attemptExtraction('mutation debounce'), DEBOUNCE_MS)
+  })
   observer.observe(document.body, { childList: true, subtree: true })
 
-  // Polling as belt-and-suspenders backup
-  const poll = setInterval(() => {
-    attempts++
-    check()
-    if (attempts >= maxAttempts && !done) {
-      runExtraction('timeout after 10s')
-    }
-  }, 500)
+  // Attempt immediately without waiting for a mutation (catches already-rendered pages)
+  attemptExtraction('immediate on load')
 }
 
 
