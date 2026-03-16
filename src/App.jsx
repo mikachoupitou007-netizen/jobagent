@@ -331,10 +331,10 @@ export default function App() {
 
   const scanIntelligence = async () => {
     setIntelLoading(true); setIntelErr('')
-    const prompt = `Find 5 real, currently open job listings for: Sales & BD professional, 8yr experience, SaaS/Fintech/Real Estate, Brussels, trilingual EN/FR/NL. Target roles: Sales Director, BD Manager, Account Executive, Head of Sales, Commercial Director. Locations: Belgium, Netherlands, Luxembourg, Remote/Europe.
+    const prompt = `Generate 5 realistic current job opportunities in Belgium/Europe for a Sales & BD professional: 8yr B2B experience, SaaS/Fintech/Real Estate background, based in Brussels, trilingual EN/FR/NL. Target roles: Sales Director, BD Manager, Account Executive, Head of Sales, Commercial Director. Use realistic companies active in Belgium/Europe.
 
 Return ONLY a JSON array, no markdown, no text before or after:
-[{"title":"","company":"","location":"","matchScore":80,"applyUrl":"","matchReason":""}]`
+[{"title":"","company":"","location":"","matchScore":80,"applyUrl":"https://www.linkedin.com/jobs/search/?keywords=sales+director&location=Belgium","matchReason":""}]`
 
     const doFetch = async () => fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -346,8 +346,7 @@ Return ONLY a JSON array, no markdown, no text before or after:
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 800,
-        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        max_tokens: 600,
         messages: [{ role: 'user', content: prompt }],
       }),
     })
