@@ -186,10 +186,28 @@ export default function App() {
   const [replyDrafts, setReplyDrafts]     = useState({})
   const [replyLoading, setReplyLoading]   = useState({})
   const [openEmail, setOpenEmail]         = useState(null)
-  const [user, setUser]                   = useState(null)
+  // Compute user + config synchronously before first render — no useEffect needed
+  const [{ initUser, initConfig, initDraft }] = useState(() => {
+    try {
+      const stored = localStorage.getItem('jobagent_user')
+      if (stored) {
+        const { data, timestamp } = JSON.parse(stored)
+        if (Date.now() - timestamp <= 24 * 60 * 60 * 1000) {
+          const fromCookie = readCfgCookie(data.id)
+          const raw = localStorage.getItem(`jobagent_config_${data.id}`)
+          const fromStorage = raw ? JSON.parse(raw) : null
+          const cfg = fromCookie ?? fromStorage
+          return { initUser: data, initConfig: cfg, initDraft: cfg ? { ...DEFAULT_CONFIG, ...cfg } : { ...DEFAULT_CONFIG } }
+        }
+        localStorage.removeItem('jobagent_user')
+      }
+    } catch { localStorage.removeItem('jobagent_user') }
+    return { initUser: null, initConfig: null, initDraft: { ...DEFAULT_CONFIG } }
+  })
+  const [user, setUser]                   = useState(initUser)
   const [loginErr, setLoginErr]           = useState('')
-  const [config, setConfig]               = useState(null)
-  const [draft, setDraft]                 = useState({ ...DEFAULT_CONFIG })
+  const [config, setConfig]               = useState(initConfig)
+  const [draft, setDraft]                 = useState(initDraft)
   const [initialising, setInitialising]   = useState(true)
   const [wizardStep, setWizardStep]       = useState(1)
   const [wInput, setWInput]               = useState({ title: '', industry: '', location: '', keyword: '' })
@@ -212,26 +230,10 @@ export default function App() {
     document.head.appendChild(s)
   }, [])
 
-  // BUG 1 & 3 — restore user + config synchronously on mount before any render
+  // Show loading screen for 300ms — user/config already set via lazy initialisers above
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem('jobagent_user')
-      if (stored) {
-        const { data, timestamp } = JSON.parse(stored)
-        if (Date.now() - timestamp <= 24 * 60 * 60 * 1000) {
-          setUser(data)
-          // Look up config immediately using the restored user ID — prevents wizard flash
-          const fromCookie = readCfgCookie(data.id)
-          const raw = localStorage.getItem(`jobagent_config_${data.id}`)
-          const fromStorage = raw ? JSON.parse(raw) : null
-          const cfg = fromCookie ?? fromStorage
-          if (cfg) { setConfig(cfg); setDraft({ ...DEFAULT_CONFIG, ...cfg }) }
-        } else {
-          localStorage.removeItem('jobagent_user')
-        }
-      }
-    } catch { localStorage.removeItem('jobagent_user') }
-    setInitialising(false)
+    const t = setTimeout(() => setInitialising(false), 300)
+    return () => clearTimeout(t)
   }, [])
 
   // BUG 2 — persist tracker to localStorage whenever it changes

@@ -232,6 +232,15 @@ function extract() {
 }
 
 
+// ── Guard: reject search/intermediate pages ───────────────────────────────────
+function isValidJob(job) {
+  if (!job.title || !job.company) return false
+  if (job.title === 'Search all Jobs') return false
+  if (job.company === 'LinkedIn') return false
+  return true
+}
+
+
 // ── LinkedIn deferred extraction — debounced MutationObserver ─────────────────
 function waitForLinkedIn() {
   console.log('[JobAgent] LinkedIn — setting up debounced MutationObserver')
@@ -245,7 +254,7 @@ function waitForLinkedIn() {
   function attemptExtraction(reason) {
     if (done) return
     const job = extract()
-    if (job.title && job.company) {
+    if (isValidJob(job)) {
       done = true
       observer.disconnect()
       clearTimeout(debounceTimer)
@@ -256,8 +265,11 @@ function waitForLinkedIn() {
       done = true
       observer.disconnect()
       clearTimeout(debounceTimer)
-      console.log('[JobAgent] LinkedIn — timeout, storing best result available')
-      chrome.storage.local.set({ jobagent_current_job: job })
+      if (isValidJob(job)) {
+        chrome.storage.local.set({ jobagent_current_job: job })
+      } else {
+        console.log('[JobAgent] LinkedIn — timeout but result invalid (search page?), not storing:', job.title, '/', job.company)
+      }
     }
   }
 
@@ -269,6 +281,71 @@ function waitForLinkedIn() {
 
   // Attempt immediately without waiting for a mutation (catches already-rendered pages)
   attemptExtraction('immediate on load')
+}
+
+
+// ── SPA navigation detection (LinkedIn React router) ─────────────────────────
+if (host.includes('linkedin.com')) {
+
+  // Override history methods to fire a custom locationchange event
+  const _pushState    = history.pushState.bind(history)
+  const _replaceState = history.replaceState.bind(history)
+
+  history.pushState = function (...args) {
+    _pushState(...args)
+    window.dispatchEvent(new Event('locationchange'))
+  }
+  history.replaceState = function (...args) {
+    _replaceState(...args)
+    window.dispatchEvent(new Event('locationchange'))
+  }
+
+  let lastUrl = window.location.href
+  let reextractTimer = null
+
+  function onNavigation() {
+    const newUrl = window.location.href
+    if (newUrl === lastUrl) return
+    console.log('[JobAgent] LinkedIn navigation detected — old:', lastUrl, '— new:', newUrl)
+    lastUrl = newUrl
+
+    // Clear stale data immediately so popup shows loading state
+    chrome.storage.local.remove('jobagent_current_job')
+    clearTimeout(reextractTimer)
+
+    // Wait 1500ms for React to start rendering, then retry up to 3 times with 1s gap
+    reextractTimer = setTimeout(() => {
+      let attempt = 0
+      const maxAttempts = 3
+
+      function tryExtract() {
+        attempt++
+        console.log('[JobAgent] LinkedIn re-extraction attempt', attempt, 'of', maxAttempts)
+        const job = extract()
+        if (isValidJob(job)) {
+          console.log('[JobAgent] LinkedIn re-extraction succeeded on attempt', attempt)
+          chrome.storage.local.set({ jobagent_current_job: job })
+        } else if (attempt < maxAttempts) {
+          console.log('[JobAgent] LinkedIn re-extraction attempt', attempt, '— invalid result (', job.title, '/', job.company, '), retrying…')
+          setTimeout(tryExtract, 1000)
+        } else {
+          console.log('[JobAgent] LinkedIn re-extraction exhausted — final result invalid, not storing:', job.title, '/', job.company)
+        }
+      }
+
+      tryExtract()
+    }, 1500)
+  }
+
+  // Listen for our custom event (pushState / replaceState)
+  window.addEventListener('locationchange', onNavigation)
+  // Listen for back/forward browser navigation
+  window.addEventListener('popstate', onNavigation)
+
+  // Poll href every 1000ms as final fallback (catches navigations that bypass history API)
+  setInterval(() => {
+    if (window.location.href !== lastUrl) onNavigation()
+  }, 1000)
 }
 
 
