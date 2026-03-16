@@ -217,9 +217,9 @@ export default function App() {
   const [intelLoading, setIntelLoading]   = useState(false)
   const [intelErr, setIntelErr]           = useState('')
 
-  const showToast = (msg) => {
+  const showToast = (msg, ms = 4000) => {
     setToast(msg)
-    setTimeout(() => setToast(null), 4000)
+    setTimeout(() => setToast(null), ms)
   }
 
   useEffect(() => {
@@ -301,11 +301,16 @@ export default function App() {
   }
 
   const saveConfig = (cfg) => {
+    console.log('Saving config...', cfg)
     if (user?.id) {
       localStorage.setItem(`jobagent_config_${user.id}`, JSON.stringify(cfg))
       writeCfgCookie(user.id, cfg)
+      console.log('Config saved to localStorage key:', `jobagent_config_${user.id}`)
+    } else {
+      console.warn('saveConfig: no user.id — user:', user)
     }
     setConfig(cfg); setDraft({ ...cfg })
+    showToast('✓ Settings saved', 2000)
   }
   const dToggle    = (field)       => setDraft(d => ({ ...d, [field]: !d[field] }))
   const dToggleArr = (field, val)  => setDraft(d => ({ ...d, [field]: d[field].includes(val) ? d[field].filter(x => x !== val) : [...d[field], val] }))
