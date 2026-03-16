@@ -1,5 +1,23 @@
 import { useState, useEffect } from "react"
 
+const cfgCookieName = (id) => `jobagent_config_${id}`
+
+const writeCfgCookie = (id, cfg) => {
+  const expires = new Date()
+  expires.setFullYear(expires.getFullYear() + 1)
+  const secure = location.protocol === 'https:' ? '; Secure' : ''
+  document.cookie = `${cfgCookieName(id)}=${btoa(JSON.stringify(cfg))}; expires=${expires.toUTCString()}; path=/; SameSite=Lax${secure}`
+}
+
+const readCfgCookie = (id) => {
+  try {
+    const prefix = cfgCookieName(id) + '='
+    const part = document.cookie.split(';').find(c => c.trim().startsWith(prefix))
+    if (!part) return null
+    return JSON.parse(atob(part.trim().slice(prefix.length)))
+  } catch { return null }
+}
+
 const G = 'linear-gradient(135deg,#7C3AED 0%,#DB2777 50%,#F97316 100%)'
 const gT = { background: G, WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }
 
@@ -197,8 +215,10 @@ export default function App() {
           const u = await r.json()
           setUser({ name: u.name, email: u.email, avatar: u.picture, id: u.sub })
           try {
-            const saved = localStorage.getItem(`jobagent_config_${u.sub}`)
-            if (saved) { const cfg = JSON.parse(saved); setConfig(cfg); setDraft({ ...DEFAULT_CONFIG, ...cfg }) }
+            const fromCookie = readCfgCookie(u.sub)
+            const fromStorage = (() => { try { const s = localStorage.getItem(`jobagent_config_${u.sub}`); return s ? JSON.parse(s) : null } catch { return null } })()
+            const cfg = fromCookie ?? fromStorage
+            if (cfg) { setConfig(cfg); setDraft({ ...DEFAULT_CONFIG, ...cfg }) }
           } catch {}
         } catch (e) { setLoginErr('Failed to fetch profile — please try again.') }
       },
@@ -212,7 +232,10 @@ export default function App() {
   }
 
   const saveConfig = (cfg) => {
-    if (user?.id) localStorage.setItem(`jobagent_config_${user.id}`, JSON.stringify(cfg))
+    if (user?.id) {
+      localStorage.setItem(`jobagent_config_${user.id}`, JSON.stringify(cfg))
+      writeCfgCookie(user.id, cfg)
+    }
     setConfig(cfg); setDraft({ ...cfg })
   }
   const dToggle    = (field)       => setDraft(d => ({ ...d, [field]: !d[field] }))
