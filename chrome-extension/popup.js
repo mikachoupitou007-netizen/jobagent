@@ -217,32 +217,20 @@ function generateCoverLetter() {
 
 
 // ── Log to Tracker ────────────────────────────────────────────────────────────
-async function logJob(job) {
+function logJob(job) {
   const j = job || currentJob
   if (!j) return
 
-  return new Promise((resolve) => {
-    chrome.storage.local.get('trackedJobs', ({ trackedJobs = [] }) => {
-      const already = trackedJobs.some(x => x.url === j.url)
-      if (already) {
-        showResult('<p class="success">Already in your tracker.</p>')
-        return resolve(false)
-      }
-      const entry = {
-        id: Date.now(),
-        title: j.title || 'Unknown role',
-        company: j.company || 'Unknown company',
-        site: j.site || '',
-        url: j.url || '',
-        date: new Date().toISOString().slice(0, 10),
-        status: 'Applied',
-      }
-      chrome.storage.local.set({ trackedJobs: [entry, ...trackedJobs] }, () => {
-        showResult('<p class="success">✓ Logged to your tracker!</p>')
-        resolve(true)
-      })
-    })
+  const params = new URLSearchParams({
+    role:    j.title   || 'Unknown role',
+    company: j.company || 'Unknown company',
+    date:    new Date().toISOString().slice(0, 10),
+    status:  'Applied',
+    url:     j.url || '',
   })
+  const dashboardUrl = `https://jobagent-mika.vercel.app/?${params.toString()}`
+  chrome.tabs.create({ url: dashboardUrl })
+  showResult('<p class="success">✓ Opening JobAgent dashboard to log this job…</p>')
 }
 
 

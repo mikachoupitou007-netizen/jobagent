@@ -191,6 +191,12 @@ export default function App() {
   const [draft, setDraft]                 = useState({ ...DEFAULT_CONFIG })
   const [wizardStep, setWizardStep]       = useState(1)
   const [wInput, setWInput]               = useState({ title: '', industry: '', location: '', keyword: '' })
+  const [toast, setToast]                 = useState(null)
+
+  const showToast = (msg) => {
+    setToast(msg)
+    setTimeout(() => setToast(null), 4000)
+  }
 
   useEffect(() => {
     if (document.querySelector('script[src="https://accounts.google.com/gsi/client"]')) return
@@ -198,6 +204,31 @@ export default function App() {
     s.src = 'https://accounts.google.com/gsi/client'
     s.async = true
     document.head.appendChild(s)
+  }, [])
+
+  // Read URL params injected by the Chrome extension "Log to Tracker" button
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const role    = params.get('role')
+    const company = params.get('company')
+    if (!role && !company) return
+    const entry = {
+      id:      Date.now(),
+      company: company || 'Unknown company',
+      role:    role    || 'Unknown role',
+      date:    params.get('date') || new Date().toISOString().slice(0, 10),
+      status:  params.get('status') || 'Applied',
+      notes:   '',
+      url:     params.get('url') || '',
+    }
+    setApps(prev => {
+      if (prev.some(a => a.url && a.url === entry.url)) return prev
+      return [entry, ...prev]
+    })
+    setTab('tracker')
+    showToast(`✓ "${entry.role}" at ${entry.company} added to tracker`)
+    // Clean URL without reloading
+    window.history.replaceState({}, '', window.location.pathname)
   }, [])
 
   const signIn = () => {
@@ -588,6 +619,13 @@ export default function App() {
 
   return (
     <div style={{ minHeight: '100vh', background: '#07070F', color: '#E8E8F4', fontFamily: "'Sora', system-ui, sans-serif", display: 'flex', flexDirection: 'column' }}>
+
+      {/* TOAST */}
+      {toast && (
+        <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: 'rgba(52,211,153,0.15)', border: '1px solid rgba(52,211,153,0.35)', color: '#34D399', borderRadius: 10, padding: '11px 20px', fontSize: 13, fontWeight: 600, zIndex: 9999, whiteSpace: 'nowrap', boxShadow: '0 4px 24px rgba(0,0,0,0.4)' }}>
+          {toast}
+        </div>
+      )}
 
       {/* TOPBAR */}
       <div style={{ height: 54, borderBottom: '1px solid rgba(255,255,255,0.06)', padding: '0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
