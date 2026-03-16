@@ -2,6 +2,19 @@
 
 const host = window.location.hostname
 
+// Strip all LinkedIn tracking query params — keep only currentJobId if present
+function cleanUrl(href) {
+  try {
+    const u = new URL(href)
+    if (u.hostname.includes('linkedin.com')) {
+      const jobId = u.searchParams.get('currentJobId')
+      const clean = u.origin + u.pathname
+      return jobId ? `${clean}?currentJobId=${jobId}` : clean
+    }
+  } catch {}
+  return href
+}
+
 function extract() {
   const try_ = (...sels) => {
     for (const sel of sels) {
@@ -214,7 +227,7 @@ function extract() {
     title,
     company,
     description: description.slice(0, 3000),
-    url: window.location.href,
+    url: cleanUrl(window.location.href),
     site,
     detected: !!(title || company) || description.length > 0,
   }
@@ -300,7 +313,7 @@ if (host.includes('linkedin.com')) {
     window.dispatchEvent(new Event('locationchange'))
   }
 
-  let lastUrl = window.location.href
+  let lastUrl = cleanUrl(window.location.href)
   let reextractTimer = null
 
   function onNavigation() {

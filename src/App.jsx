@@ -331,54 +331,45 @@ export default function App() {
 
   const scanIntelligence = async () => {
     setIntelLoading(true); setIntelErr('')
+    const prompt = `Find 5 real, currently open job listings for: Sales & BD professional, 8yr experience, SaaS/Fintech/Real Estate, Brussels, trilingual EN/FR/NL. Target roles: Sales Director, BD Manager, Account Executive, Head of Sales, Commercial Director. Locations: Belgium, Netherlands, Luxembourg, Remote/Europe.
+
+Return ONLY a JSON array, no markdown, no text before or after:
+[{"title":"","company":"","location":"","matchScore":80,"applyUrl":"","matchReason":""}]`
+
+    const doFetch = async () => fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 800,
+        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    })
+
     try {
-      const prompt = `You are a job market intelligence agent for Michael Van Gyseghem — a Strategic Sales & Business Development leader with 8+ years B2B experience in fintech, real estate, SaaS, and franchise development. He is based in Brussels/Belgium and open to European roles. He speaks English C2, Dutch C2, French C1, German B2.
-
-Search the web right now for 8 real, currently open job listings that match his profile. Target roles: Sales Director, Business Development Manager, Strategic Account Executive, Customer Success Manager, Head of Sales, Commercial Director, Partnerships Manager. Target sectors: SaaS/Tech, Fintech, Real Estate, Consulting, Scale-ups. Target locations: Belgium, Netherlands, Luxembourg, Remote/Europe.
-
-Return ONLY a valid JSON array, no markdown, no preamble:
-[
-  {
-    "title": "exact job title",
-    "company": "company name",
-    "location": "city, country",
-    "matchScore": 82,
-    "salaryRange": "€80k–€110k" or "Not specified",
-    "postedDate": "YYYY-MM-DD or approximate",
-    "applyUrl": "direct URL to job posting",
-    "matchReason": "1 sentence explaining why this fits Michael specifically",
-    "keyRequirements": ["requirement 1", "requirement 2", "requirement 3"]
-  }
-]
-
-Score matchScore 0-100 based on: role seniority match, sector relevance, language requirements, location fit, B2B sales experience alignment.`
-
-      const res = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: 4000,
-          tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-          messages: [{ role: 'user', content: prompt }],
-        }),
-      })
+      let res = await doFetch()
+      if (res.status === 429) {
+        await new Promise(r => setTimeout(r, 3000))
+        res = await doFetch()
+      }
       if (!res.ok) {
         const errBody = await res.text()
         throw new Error(`API ${res.status}: ${errBody}`)
       }
       const d = await res.json()
-      // Extract text from the last content block (after tool use blocks)
       const textBlock = [...(d.content || [])].reverse().find(b => b.type === 'text')
       if (!textBlock?.text) throw new Error(d.error?.message || 'No text block in response — check API key and model access')
-      const raw = textBlock.text.replace(/```json|```/g, '').trim()
+      const raw = textBlock.text
+      const start = raw.indexOf('['), end = raw.lastIndexOf(']')
+      if (start === -1 || end === -1) throw new Error('No JSON array found in response: ' + raw.slice(0, 120))
       let jobs
-      try { jobs = JSON.parse(raw) } catch { throw new Error('Response was not valid JSON: ' + raw.slice(0, 120)) }
+      try { jobs = JSON.parse(raw.slice(start, end + 1)) } catch { throw new Error('Response was not valid JSON: ' + raw.slice(start, start + 120)) }
       const scannedAt = new Date().toISOString()
       setIntelJobs(jobs)
       setIntelScannedAt(scannedAt)
