@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "JobAgent",
+  "version": "1.0.0",
+  "description": "AI-powered job application assistant for Michael Van Gyseghem",
+  "permissions": ["activeTab", "storage", "scripting"],
+  "host_permissions": [
+    "<all_urls>",
+    "https://api.anthropic.com/",
+    "https://api.anthropic.com/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://api.anthropic.com"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "JobAgent"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.linkedin.com/jobs/*",
+        "*://*.indeed.com/*",
+        "*://*.glassdoor.com/*",
+        "*://*.glassdoor.co.uk/*",
+        "*://*.welcometothejungle.com/*",
+        "*://*.stepstone.be/*",
+        "*://*.stepstone.de/*",
+        "*://*.stepstone.co.uk/*",
+        "*://*.stepstone.at/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #07070F;
+      --card: rgba(255,255,255,0.04);
+      --border: rgba(255,255,255,0.08);
+      --text: #E8E8F4;
+      --muted: rgba(255,255,255,0.38);
+      --g: linear-gradient(135deg,#7C3AED 0%,#DB2777 50%,#F97316 100%);
+    }
+
+    body {
+      width: 380px;
+      height: 520px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+      font-size: 12px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      height: 46px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    .header-left { display: flex; align-items: center; gap: 8px; }
+    .logo {
+      width: 26px; height: 26px; border-radius: 7px;
+      background: var(--g);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 800; color: white; flex-shrink: 0;
+    }
+    .logo-name { font-weight: 700; font-size: 13px; letter-spacing: -0.3px; }
+    .logo-name span { background: var(--g); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .badge { font-size: 8px; color: rgba(255,255,255,0.28); background: rgba(255,255,255,0.06); padding: 2px 6px; border-radius: 20px; }
+    .icon-btn {
+      background: none; border: none; cursor: pointer; color: var(--muted);
+      font-size: 15px; padding: 4px; border-radius: 6px; line-height: 1;
+      transition: color 0.15s;
+    }
+    .icon-btn:hover { color: var(--text); }
+
+    /* ── Screens ── */
+    .screen { display: none; flex: 1; flex-direction: column; overflow-y: auto; padding: 14px; }
+    .screen.active { display: flex; }
+
+    /* ── Setup screen ── */
+    .setup-body { display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; text-align: center; gap: 10px; }
+    .setup-logo { width: 52px; height: 52px; border-radius: 14px; background: var(--g); display: flex; align-items: center; justify-content: center; font-size: 22px; font-weight: 800; color: white; margin-bottom: 4px; }
+    .setup-title { font-size: 17px; font-weight: 700; letter-spacing: -0.4px; }
+    .setup-sub { font-size: 11px; color: var(--muted); line-height: 1.6; max-width: 260px; }
+
+    /* ── Main screen ── */
+    .detection-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 20px;
+      margin-bottom: 10px; align-self: flex-start;
+    }
+    .detection-badge.found { background: rgba(52,211,153,0.12); color: #34D399; }
+    .detection-badge.not-found { background: rgba(255,255,255,0.06); color: var(--muted); }
+
+    .job-card {
+      background: var(--card); border: 1px solid var(--border); border-radius: 11px;
+      padding: 12px 14px; margin-bottom: 10px;
+    }
+    .job-title { font-size: 13px; font-weight: 700; letter-spacing: -0.2px; margin-bottom: 3px; line-height: 1.4; }
+    .job-company { font-size: 11px; color: rgba(255,255,255,0.55); }
+    .job-site-badge {
+      display: inline-flex; margin-top: 7px; font-size: 9px; font-weight: 600;
+      padding: 2px 7px; border-radius: 20px;
+      background: rgba(124,58,237,0.15); color: #C4B5FD;
+    }
+
+    .empty-state {
+      flex: 1; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; text-align: center; gap: 8px; padding: 20px;
+    }
+    .empty-icon { font-size: 32px; }
+    .empty-title { font-size: 13px; font-weight: 600; }
+    .empty-sub { font-size: 11px; color: var(--muted); line-height: 1.6; max-width: 240px; }
+    .sites-list { display: flex; flex-wrap: wrap; gap: 5px; justify-content: center; margin-top: 4px; }
+    .site-chip { font-size: 10px; padding: 2px 8px; border-radius: 20px; background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--muted); }
+
+    /* ── Buttons ── */
+    .actions { display: flex; flex-direction: column; gap: 7px; margin-bottom: 10px; }
+    .btn {
+      width: 100%; padding: 9px 14px; border-radius: 9px; border: none;
+      font-size: 12px; font-weight: 600; cursor: pointer; font-family: inherit;
+      display: flex; align-items: center; justify-content: center; gap: 7px;
+      transition: opacity 0.15s;
+    }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary { background: var(--g); color: white; }
+    .btn-primary:hover:not(:disabled) { opacity: 0.88; }
+    .btn-ghost {
+      background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+      color: rgba(255,255,255,0.65);
+    }
+    .btn-ghost:hover:not(:disabled) { background: rgba(255,255,255,0.08); }
+
+    /* ── Results ── */
+    .result-box {
+      background: rgba(124,58,237,0.07); border: 1px solid rgba(124,58,237,0.2);
+      border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
+    }
+    .result-label { font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.28); letter-spacing: 1.2px; text-transform: uppercase; margin-bottom: 8px; }
+    .result-score { font-size: 36px; font-weight: 800; background: var(--g); -webkit-background-clip: text; -webkit-text-fill-color: transparent; line-height: 1; margin-bottom: 2px; }
+    .result-score-sub { font-size: 10px; color: var(--muted); margin-bottom: 10px; }
+    .result-text { font-size: 11px; color: rgba(255,255,255,0.72); line-height: 1.75; white-space: pre-wrap; }
+    .skill-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0; }
+    .skill-chip { font-size: 9px; padding: 2px 7px; border-radius: 20px; }
+    .chip-match { background: rgba(52,211,153,0.12); color: #34D399; }
+    .chip-gap   { background: rgba(248,113,113,0.12); color: #FCA5A5; }
+
+    .result-actions { display: flex; gap: 6px; margin-top: 10px; }
+    .btn-xs { padding: 5px 11px; font-size: 10px; border-radius: 7px; }
+
+    /* ── Settings screen ── */
+    .settings-section { margin-bottom: 16px; }
+    .settings-label { font-size: 10px; font-weight: 600; color: var(--muted); letter-spacing: 1.2px; text-transform: uppercase; margin-bottom: 8px; display: block; }
+    .settings-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .settings-row-title { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+    .settings-row-sub { font-size: 10px; color: var(--muted); }
+
+    /* ── Inputs ── */
+    input[type="text"], input[type="password"] {
+      width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+      border-radius: 8px; padding: 9px 12px; color: var(--text); font-size: 12px;
+      font-family: inherit; outline: none;
+    }
+    input[type="text"]:focus, input[type="password"]:focus { border-color: rgba(124,58,237,0.5); }
+
+    /* ── Tracker screen ── */
+    .tracker-item { background: var(--card); border: 1px solid var(--border); border-radius: 9px; padding: 10px 12px; margin-bottom: 7px; }
+    .tracker-title { font-size: 12px; font-weight: 600; margin-bottom: 2px; }
+    .tracker-meta { font-size: 10px; color: var(--muted); }
+    .tracker-status { font-size: 9px; padding: 2px 7px; border-radius: 20px; background: rgba(96,165,250,0.13); color: #60A5FA; font-weight: 600; float: right; }
+
+    .err { color: #F87171; font-size: 11px; margin-top: 6px; }
+    .success { color: #34D399; font-size: 11px; margin-top: 6px; }
+
+    /* ── Spinner ── */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spin { display: inline-block; animation: spin 0.8s linear infinite; }
+  </style>
+</head>
+<body>
+
+  <!-- ── HEADER ── -->
+  <div class="header">
+    <div class="header-left">
+      <div class="logo">J</div>
+      <span class="logo-name">Job<span>Agent</span></span>
+      <span class="badge">v1.0</span>
+    </div>
+    <div style="display:flex;gap:4px">
+      <button class="icon-btn" id="btn-tracker" title="Saved Jobs">☰</button>
+      <button class="icon-btn" id="btn-settings" title="Settings">⚙</button>
+    </div>
+  </div>
+
+  <!-- ── SCREEN: SETUP ── -->
+  <div class="screen" id="screen-setup">
+    <div class="setup-body">
+      <div class="setup-logo">J</div>
+      <div class="setup-title">Welcome to JobAgent</div>
+      <div class="setup-sub">Enter your Anthropic API key to enable AI analysis, match scoring, and cover letter generation.</div>
+      <div style="width:100%;margin-top:8px">
+        <input type="password" id="setup-key" placeholder="sk-ant-api03-..." autocomplete="off" />
+        <p id="setup-err" class="err" style="display:none"></p>
+        <button class="btn btn-primary" id="btn-save-setup" style="margin-top:8px">Save API Key →</button>
+      </div>
+      <p style="font-size:10px;color:rgba(255,255,255,0.2);margin-top:4px">Stored securely in chrome.storage.sync · Never sent anywhere except Anthropic</p>
+    </div>
+  </div>
+
+  <!-- ── SCREEN: MAIN ── -->
+  <div class="screen" id="screen-main">
+
+    <div id="state-detected">
+      <span class="detection-badge found" id="detection-badge">● Detected</span>
+      <div class="job-card" id="job-card">
+        <div class="job-title" id="job-title">—</div>
+        <div class="job-company" id="job-company">—</div>
+        <span class="job-site-badge" id="job-site"></span>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="btn-analyse">✦ Analyse with AI</button>
+        <div style="display:flex;gap:7px">
+          <button class="btn btn-ghost" id="btn-log" style="flex:1">+ Log to Tracker</button>
+          <button class="btn btn-ghost" id="btn-cover" style="flex:1">✉ Cover Letter</button>
+        </div>
+      </div>
+      <div id="result-area"></div>
+    </div>
+
+    <div id="state-not-detected" style="display:none">
+      <div class="empty-state">
+        <div class="empty-icon">🔍</div>
+        <div class="empty-title">No job listing detected</div>
+        <div class="empty-sub">Navigate to a job listing on any of these platforms and re-open JobAgent:</div>
+        <div class="sites-list">
+          <span class="site-chip">LinkedIn</span>
+          <span class="site-chip">Indeed</span>
+          <span class="site-chip">Glassdoor</span>
+          <span class="site-chip">Welcome to the Jungle</span>
+          <span class="site-chip">StepStone</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ── SCREEN: TRACKER ── -->
+  <div class="screen" id="screen-tracker">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+      <span style="font-weight:700;font-size:13px">Saved Jobs</span>
+      <button class="icon-btn" id="btn-back-tracker">✕</button>
+    </div>
+    <div id="tracker-list"></div>
+    <div id="tracker-empty" style="display:none">
+      <div class="empty-state">
+        <div class="empty-icon">📭</div>
+        <div class="empty-title">No jobs logged yet</div>
+        <div class="empty-sub">Click "Log to Tracker" on any job listing to save it here.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── SCREEN: SETTINGS ── -->
+  <div class="screen" id="screen-settings">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <span style="font-weight:700;font-size:13px">Settings</span>
+      <button class="icon-btn" id="btn-back-settings">✕</button>
+    </div>
+
+    <div class="settings-section">
+      <span class="settings-label">Anthropic API Key</span>
+      <input type="password" id="settings-key" placeholder="sk-ant-api03-..." autocomplete="off" />
+      <p id="settings-key-hint" style="font-size:10px;color:rgba(255,255,255,0.28);margin-top:5px">Key is stored in chrome.storage.sync</p>
+    </div>
+
+    <div class="settings-section">
+      <span class="settings-label">Saved Jobs</span>
+      <div class="settings-row">
+        <div>
+          <div class="settings-row-title" id="jobs-count">0 jobs tracked</div>
+          <div class="settings-row-sub">Stored in chrome.storage.local</div>
+        </div>
+        <button class="btn btn-ghost btn-xs" id="btn-clear-jobs">Clear all</button>
+      </div>
+    </div>
+
+    <p id="settings-msg" style="display:none;font-size:11px;margin-bottom:8px"></p>
+    <button class="btn btn-primary" id="btn-save-settings">Save Settings</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
