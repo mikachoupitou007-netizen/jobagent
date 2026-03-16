@@ -334,9 +334,26 @@ export default function App() {
   const updStatus = (id, s) => setApps(p => p.map(a => a.id === id ? { ...a, status: s } : a))
   const delApp    = (id)    => setApps(p => p.filter(a => a.id !== id))
 
+  const parseIntelJobs = (raw) => {
+    // Try full parse first
+    const start = raw.indexOf('['), end = raw.lastIndexOf(']')
+    if (start !== -1 && end !== -1) {
+      try { return JSON.parse(raw.slice(start, end + 1)) } catch {}
+    }
+    // Response was cut off — extract all complete objects via regex
+    const matches = [...raw.matchAll(/\{[^{}]*\}/gs)]
+    const complete = []
+    for (const m of matches) {
+      try { complete.push(JSON.parse(m[0])) } catch {}
+    }
+    if (complete.length > 0) return complete
+    throw new Error('No parseable job objects found in response: ' + raw.slice(0, 120))
+  }
+
   const scanIntelligence = async () => {
     setIntelLoading(true); setIntelErr('')
-    const prompt = `Generate 5 realistic current job opportunities in Belgium/Europe for a Sales & BD professional: 8yr B2B experience, SaaS/Fintech/Real Estate background, based in Brussels, trilingual EN/FR/NL. Target roles: Sales Director, BD Manager, Account Executive, Head of Sales, Commercial Director. Use realistic companies active in Belgium/Europe.
+    // Fixed short prompt — settings only affect display/filtering, never the API call
+    const prompt = `Generate 5 realistic job opportunities in Belgium/Europe for: Senior Sales and BD professional Brussels Belgium SaaS Fintech Real Estate trilingual. Roles: Sales Director, BD Manager, Account Executive, Head of Sales, Commercial Director. Companies active in Belgium/Europe.
 
 Return ONLY a JSON array, no markdown, no text before or after:
 [{"title":"","company":"","location":"","matchScore":80,"applyUrl":"https://www.linkedin.com/jobs/search/?keywords=sales+director&location=Belgium","matchReason":""}]`
@@ -369,11 +386,7 @@ Return ONLY a JSON array, no markdown, no text before or after:
       const d = await res.json()
       const textBlock = [...(d.content || [])].reverse().find(b => b.type === 'text')
       if (!textBlock?.text) throw new Error(d.error?.message || 'No text block in response — check API key and model access')
-      const raw = textBlock.text
-      const start = raw.indexOf('['), end = raw.lastIndexOf(']')
-      if (start === -1 || end === -1) throw new Error('No JSON array found in response: ' + raw.slice(0, 120))
-      let jobs
-      try { jobs = JSON.parse(raw.slice(start, end + 1)) } catch { throw new Error('Response was not valid JSON: ' + raw.slice(start, start + 120)) }
+      const jobs = parseIntelJobs(textBlock.text)
       const scannedAt = new Date().toISOString()
       setIntelJobs(jobs)
       setIntelScannedAt(scannedAt)
