@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Gmail OAuth Test</title>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      background: #07070F;
+      color: #E8E8F4;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .card {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px;
+      padding: 48px 56px;
+      text-align: center;
+      max-width: 480px;
+      width: 100%;
+    }
+
+    .logo {
+      width: 48px;
+      height: 48px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #7C3AED 0%, #DB2777 50%, #F97316 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      font-weight: 700;
+      color: white;
+      margin: 0 auto 24px;
+    }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.4px;
+      margin-bottom: 8px;
+    }
+
+    .subtitle {
+      font-size: 13px;
+      color: rgba(255,255,255,0.4);
+      margin-bottom: 36px;
+      line-height: 1.6;
+    }
+
+    #connect-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: #ffffff;
+      color: #1a1a1a;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 24px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: opacity 0.15s;
+    }
+
+    #connect-btn:hover { opacity: 0.88; }
+    #connect-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    #connect-btn svg {
+      width: 18px;
+      height: 18px;
+      flex-shrink: 0;
+    }
+
+    #result {
+      display: none;
+      margin-top: 32px;
+      padding: 20px;
+      background: rgba(52,211,153,0.08);
+      border: 1px solid rgba(52,211,153,0.25);
+      border-radius: 10px;
+    }
+
+    #result .check {
+      font-size: 28px;
+      margin-bottom: 10px;
+    }
+
+    #result .label {
+      font-size: 11px;
+      color: rgba(255,255,255,0.35);
+      letter-spacing: 1.2px;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    #result .email {
+      font-size: 20px;
+      font-weight: 700;
+      color: #34D399;
+      letter-spacing: -0.3px;
+    }
+
+    #result .confirm {
+      font-size: 12px;
+      color: rgba(255,255,255,0.38);
+      margin-top: 6px;
+    }
+
+    #error {
+      display: none;
+      margin-top: 20px;
+      font-size: 12px;
+      color: #F87171;
+    }
+  </style>
+</head>
+<body>
+
+<div class="card">
+  <div class="logo">J</div>
+  <h1>Connect Gmail</h1>
+  <p class="subtitle">Authorise read-only access to your Gmail inbox.<br>This page tests the OAuth connection.</p>
+
+  <button id="connect-btn" onclick="connectGmail()">
+    <!-- Google G icon -->
+    <svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg">
+      <path fill="#EA4335" d="M24 9.5c3.14 0 5.95 1.08 8.17 2.86l6.1-6.1C34.46 3.09 29.5 1 24 1 14.82 1 7.07 6.48 3.74 14.22l7.19 5.59C12.7 13.74 17.9 9.5 24 9.5z"/>
+      <path fill="#4285F4" d="M46.1 24.55c0-1.64-.15-3.22-.42-4.75H24v9h12.42c-.54 2.9-2.18 5.36-4.65 7.01l7.19 5.59C43.18 37.4 46.1 31.45 46.1 24.55z"/>
+      <path fill="#FBBC05" d="M10.93 28.19A14.6 14.6 0 0 1 9.5 24c0-1.46.25-2.88.69-4.19L2.99 14.22A22.93 22.93 0 0 0 1 24c0 3.77.9 7.34 2.49 10.5l7.44-6.31z"/>
+      <path fill="#34A853" d="M24 47c5.95 0 10.95-1.97 14.6-5.35l-7.19-5.59C29.46 37.6 26.9 38.5 24 38.5c-6.1 0-11.3-4.24-13.07-9.95l-7.44 6.31C7.07 43.03 14.82 47 24 47z"/>
+      <path fill="none" d="M0 0h48v48H0z"/>
+    </svg>
+    Connect Gmail
+  </button>
+
+  <div id="result">
+    <div class="check">✓</div>
+    <div class="label">Connected as</div>
+    <div class="email" id="user-email"></div>
+    <div class="confirm">Gmail read access granted successfully</div>
+  </div>
+
+  <div id="error"></div>
+</div>
+
+<script>
+  const CLIENT_ID = '1014221333528-8bk2r2egph8kiqg4slvpqc2gqetqssbs.apps.googleusercontent.com';
+  const SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
+
+  function connectGmail() {
+    const btn = document.getElementById('connect-btn');
+    btn.disabled = true;
+    btn.textContent = 'Connecting...';
+
+    const client = google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: SCOPE,
+      callback: async (tokenResponse) => {
+        if (tokenResponse.error) {
+          showError('OAuth error: ' + tokenResponse.error);
+          resetBtn();
+          return;
+        }
+        try {
+          const res = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+            headers: { Authorization: 'Bearer ' + tokenResponse.access_token }
+          });
+          const user = await res.json();
+          document.getElementById('user-email').textContent = user.email;
+          document.getElementById('result').style.display = 'block';
+          document.getElementById('error').style.display = 'none';
+          btn.style.display = 'none';
+        } catch (e) {
+          showError('Failed to fetch user info: ' + e.message);
+          resetBtn();
+        }
+      },
+    });
+
+    client.requestAccessToken({ prompt: 'consent' });
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('error');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+
+  function resetBtn() {
+    const btn = document.getElementById('connect-btn');
+    btn.disabled = false;
+    btn.innerHTML = `<svg viewBox="0 0 48 48" xmlns="http://www.w3.org/2000/svg" style="width:18px;height:18px;flex-shrink:0"><path fill="#EA4335" d="M24 9.5c3.14 0 5.95 1.08 8.17 2.86l6.1-6.1C34.46 3.09 29.5 1 24 1 14.82 1 7.07 6.48 3.74 14.22l7.19 5.59C12.7 13.74 17.9 9.5 24 9.5z"/><path fill="#4285F4" d="M46.1 24.55c0-1.64-.15-3.22-.42-4.75H24v9h12.42c-.54 2.9-2.18 5.36-4.65 7.01l7.19 5.59C43.18 37.4 46.1 31.45 46.1 24.55z"/><path fill="#FBBC05" d="M10.93 28.19A14.6 14.6 0 0 1 9.5 24c0-1.46.25-2.88.69-4.19L2.99 14.22A22.93 22.93 0 0 0 1 24c0 3.77.9 7.34 2.49 10.5l7.44-6.31z"/><path fill="#34A853" d="M24 47c5.95 0 10.95-1.97 14.6-5.35l-7.19-5.59C29.46 37.6 26.9 38.5 24 38.5c-6.1 0-11.3-4.24-13.07-9.95l-7.44 6.31C7.07 43.03 14.82 47 24 47z"/></svg> Connect Gmail`;
+  }
+</script>
+
+</body>
+</html>
