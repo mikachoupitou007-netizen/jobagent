@@ -169,8 +169,8 @@ export default function App() {
   const [openEmail, setOpenEmail]         = useState(null)
   const [user, setUser]                   = useState(null)
   const [loginErr, setLoginErr]           = useState('')
-  const [config, setConfig]               = useState(() => { try { const s = localStorage.getItem('jobagent_config'); return s ? JSON.parse(s) : null } catch { return null } })
-  const [draft, setDraft]                 = useState(() => { try { const s = localStorage.getItem('jobagent_config'); return s ? { ...DEFAULT_CONFIG, ...JSON.parse(s) } : { ...DEFAULT_CONFIG } } catch { return { ...DEFAULT_CONFIG } } })
+  const [config, setConfig]               = useState(null)
+  const [draft, setDraft]                 = useState({ ...DEFAULT_CONFIG })
   const [wizardStep, setWizardStep]       = useState(1)
   const [wInput, setWInput]               = useState({ title: '', industry: '', location: '', keyword: '' })
 
@@ -195,7 +195,11 @@ export default function App() {
             headers: { Authorization: 'Bearer ' + tokenResponse.access_token }
           })
           const u = await r.json()
-          setUser({ name: u.name, email: u.email, avatar: u.picture })
+          setUser({ name: u.name, email: u.email, avatar: u.picture, id: u.sub })
+          try {
+            const saved = localStorage.getItem(`jobagent_config_${u.sub}`)
+            if (saved) { const cfg = JSON.parse(saved); setConfig(cfg); setDraft({ ...DEFAULT_CONFIG, ...cfg }) }
+          } catch {}
         } catch (e) { setLoginErr('Failed to fetch profile — please try again.') }
       },
     })
@@ -208,7 +212,7 @@ export default function App() {
   }
 
   const saveConfig = (cfg) => {
-    localStorage.setItem('jobagent_config', JSON.stringify(cfg))
+    if (user?.id) localStorage.setItem(`jobagent_config_${user.id}`, JSON.stringify(cfg))
     setConfig(cfg); setDraft({ ...cfg })
   }
   const dToggle    = (field)       => setDraft(d => ({ ...d, [field]: !d[field] }))
