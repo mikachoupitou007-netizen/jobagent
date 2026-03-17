@@ -130,6 +130,7 @@ const callClaude = async (prompt) => {
       "Content-Type": "application/json",
       "x-api-key": import.meta.env.VITE_ANTHROPIC_API_KEY,
       "anthropic-version": "2023-06-01",
+      "anthropic-dangerous-direct-browser-access": "true",
     },
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
@@ -156,6 +157,7 @@ const NAV = [
   { id: 'analyser',      label: 'JD Analyser',    icon: '◈' },
   { id: 'tracker',       label: 'Applications',   icon: '◉' },
   { id: 'intelligence',  label: 'Intelligence',   icon: '◎' },
+  { id: 'autoapply',     label: 'Auto-Apply',     icon: '⚡' },
   { id: 'interview',     label: 'Interview Prep', icon: '◇' },
   { id: 'profile',       label: 'My Profile',     icon: '◍' },
   { id: 'gmail',         label: 'Gmail Agent',    icon: '✉' },
@@ -216,6 +218,12 @@ export default function App() {
   const [intelScannedAt, setIntelScannedAt] = useState(() => { try { const s = localStorage.getItem('jobagent_intelligence'); return s ? JSON.parse(s).scannedAt : null } catch { return null } })
   const [intelLoading, setIntelLoading]   = useState(false)
   const [intelErr, setIntelErr]           = useState('')
+  const [autoQueue, setAutoQueue]         = useState(() => { try { const s = localStorage.getItem('jobagent_autoapply_queue'); return s ? JSON.parse(s) : [] } catch { return [] } })
+  const [autoExpanded, setAutoExpanded]   = useState({})
+  const [autoAddForm, setAutoAddForm]     = useState(false)
+  const [autoNewJob, setAutoNewJob]       = useState({ title: '', company: '', url: '', platform: 'LinkedIn' })
+  const [autoPrepping, setAutoPrepping]   = useState(new Set())
+  const [queuePrompt, setQueuePrompt]     = useState(null)
 
   const showToast = (msg, ms = 4000) => {
     setToast(msg)
@@ -241,6 +249,10 @@ export default function App() {
     localStorage.setItem('jobagent_tracker', JSON.stringify(apps))
   }, [apps])
 
+  useEffect(() => {
+    localStorage.setItem('jobagent_autoapply_queue', JSON.stringify(autoQueue))
+  }, [autoQueue])
+
   // Read URL params injected by the Chrome extension "Log to Tracker" button
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -262,6 +274,7 @@ export default function App() {
     })
     setTab('tracker')
     showToast(`✓ "${entry.role}" at ${entry.company} added to tracker`)
+    setQueuePrompt({ title: entry.role, company: entry.company, url: entry.url, platform: entry.url?.includes('linkedin') ? 'LinkedIn' : entry.url?.includes('welcometothejungle') ? 'WTTJ' : 'LinkedIn', matchScore: 0 })
     // Clean URL without reloading
     window.history.replaceState({}, '', window.location.pathname)
   }, [])
@@ -408,6 +421,50 @@ Return ONLY a JSON array, no markdown, no text before or after:
     const subject = `JobAgent Daily Digest — ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}`
     const mailto = `mailto:michael.vangyseghem@gmail.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent('Your top matches today:\n\n' + body)}`
     window.open(mailto)
+  }
+
+  const addToAutoQueue = (job) => {
+    const url = job.url || job.applyUrl || ''
+    const entry = {
+      id: Date.now(),
+      title: job.title || job.role || '',
+      company: job.company || '',
+      url,
+      platform: url.includes('linkedin') ? 'LinkedIn' : url.includes('welcometothejungle') ? 'WTTJ' : 'Other',
+      matchScore: job.matchScore || 0,
+      coverLetter: '',
+      formAnswers: {},
+      status: 'pending',
+      dateAdded: new Date().toISOString().slice(0, 10),
+    }
+    setAutoQueue(prev => {
+      if (prev.some(q => q.url && q.url === entry.url)) { showToast('Already in Auto-Apply queue', 2000); return prev }
+      showToast('⚡ Added to Auto-Apply queue', 2000)
+      return [entry, ...prev]
+    })
+  }
+
+  const prepareApplication = async (jobId) => {
+    const job = autoQueue.find(j => j.id === jobId)
+    if (!job) return
+    setAutoPrepping(prev => new Set([...prev, jobId]))
+    try {
+      const profile = `${MICHAEL.name}, ${MICHAEL.title}. Experience: ${MICHAEL.experience.map(e => `${e.role} at ${e.company} (${e.period})`).join('; ')}. Skills: ${MICHAEL.skills.slice(0, 6).join(', ')}. Languages: EN/FR/NL native/fluent.`
+      const prompt = `Write application materials for ${MICHAEL.name} applying to "${job.title}" at "${job.company}". Profile: ${profile}
+
+Return ONLY valid JSON, no markdown:
+{"coverLetter":"3 concise paragraphs under 200 words","formAnswers":{"whyThisRole":"2 sentence answer tailored to the role","describeExperience":"2 sentence answer using real experience","salaryExpectation":"€80,000–€110,000 depending on full package","availability":"Available immediately","whyThisCompany":"1 sentence answer"}}`
+      const text = await callClaude(prompt)
+      const start = text.indexOf('{'), end = text.lastIndexOf('}')
+      const parsed = JSON.parse(text.slice(start, end + 1))
+      setAutoQueue(prev => prev.map(j => j.id === jobId
+        ? { ...j, coverLetter: parsed.coverLetter || '', formAnswers: parsed.formAnswers || {}, status: 'prepared' }
+        : j))
+    } catch (e) {
+      console.error('Prepare failed:', e)
+      showToast('Preparation failed: ' + e.message, 3000)
+    }
+    setAutoPrepping(prev => { const s = new Set(prev); s.delete(jobId); return s })
   }
 
   const analyseJD = async () => {
@@ -752,6 +809,15 @@ Return ONLY a JSON array, no markdown, no text before or after:
       {toast && (
         <div style={{ position: 'fixed', bottom: 24, left: '50%', transform: 'translateX(-50%)', background: 'rgba(52,211,153,0.15)', border: '1px solid rgba(52,211,153,0.35)', color: '#34D399', borderRadius: 10, padding: '11px 20px', fontSize: 13, fontWeight: 600, zIndex: 9999, whiteSpace: 'nowrap', boxShadow: '0 4px 24px rgba(0,0,0,0.4)' }}>
           {toast}
+        </div>
+      )}
+
+      {/* QUEUE PROMPT */}
+      {queuePrompt && (
+        <div style={{ position: 'fixed', bottom: 72, left: '50%', transform: 'translateX(-50%)', background: '#1A1A2E', border: '1px solid rgba(124,58,237,0.4)', borderRadius: 12, padding: '14px 20px', fontSize: 13, zIndex: 9998, boxShadow: '0 4px 32px rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', gap: 14, whiteSpace: 'nowrap' }}>
+          <span style={{ color: 'rgba(255,255,255,0.75)' }}>⚡ Add <strong style={{ color: 'white' }}>"{queuePrompt.title}"</strong> to Auto-Apply queue?</span>
+          <button onClick={() => { addToAutoQueue(queuePrompt); setQueuePrompt(null) }} style={{ ...C.btn, padding: '6px 14px', fontSize: 12 }}>Yes</button>
+          <button onClick={() => setQueuePrompt(null)} style={{ ...C.ghost, padding: '6px 14px', fontSize: 12 }}>No</button>
         </div>
       )}
 
@@ -1237,7 +1303,7 @@ Return ONLY a JSON array, no markdown, no text before or after:
                             </div>
                             <div style={{ display: 'flex', gap: 7, marginTop: 14, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 14 }}>
                               <button onClick={() => { setJd(`${job.title} at ${job.company}\n${job.location}\n\n${(job.keyRequirements || []).join(', ')}\n\n${job.matchReason}`); setTab('analyser') }} style={{ ...C.ghost, fontSize: 11, padding: '6px 14px' }}>◈ Analyse</button>
-                              <button onClick={() => { setApps(p => p.some(a => a.url === job.applyUrl) ? p : [{ id: Date.now(), company: job.company, role: job.title, date: today, status: 'Applied', notes: '', url: job.applyUrl || '' }, ...p]); showToast(`✓ "${job.title}" logged to tracker`) }} style={{ ...C.ghost, fontSize: 11, padding: '6px 14px' }}>◉ Log</button>
+                              <button onClick={() => { setApps(p => p.some(a => a.url === job.applyUrl) ? p : [{ id: Date.now(), company: job.company, role: job.title, date: today, status: 'Applied', notes: '', url: job.applyUrl || '' }, ...p]); showToast(`✓ "${job.title}" logged to tracker`); setQueuePrompt({ title: job.title, company: job.company, url: job.applyUrl || '', platform: job.applyUrl?.includes('linkedin') ? 'LinkedIn' : 'Other', matchScore: job.matchScore || 0 }) }} style={{ ...C.ghost, fontSize: 11, padding: '6px 14px' }}>◉ Log</button>
                               {job.applyUrl && <button onClick={() => window.open(job.applyUrl, '_blank')} style={{ ...C.btn, fontSize: 11, padding: '6px 14px' }}>Apply →</button>}
                             </div>
                           </div>
@@ -1407,6 +1473,181 @@ Return ONLY a JSON array, no markdown, no text before or after:
                   <button onClick={() => setDraft({ ...config })} style={{ ...C.ghost, fontSize: 12 }}>Reset to Saved</button>
                   <button onClick={() => saveConfig(draft)} style={{ ...C.btn, fontSize: 12 }}>Save Changes</button>
                 </div>
+              </div>
+            )
+          })()}
+
+          {/* ── AUTO-APPLY ── */}
+          {tab === 'autoapply' && (() => {
+            const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+            const totalQueued   = autoQueue.filter(j => j.status !== 'skipped').length
+            const totalPrepared = autoQueue.filter(j => j.status === 'prepared').length
+            const totalApplied  = autoQueue.filter(j => j.status === 'applied' && j.dateAdded >= weekAgo).length
+            const FORM_LABELS = {
+              whyThisRole:        'Why this role?',
+              describeExperience: 'Describe your experience',
+              salaryExpectation:  'Salary expectation',
+              availability:       'Availability',
+              whyThisCompany:     'Why this company?',
+            }
+            return (
+              <div>
+                <div style={{ marginBottom: 24 }}>
+                  <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.5px', marginBottom: 4 }}>Auto-Apply <span style={gT}>Queue</span></h1>
+                  <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.36)' }}>Prepare cover letters and form answers, then apply in one click.</p>
+                </div>
+
+                {/* Stats bar */}
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12, marginBottom: 22 }}>
+                  {[
+                    { l: 'In Queue',        v: totalQueued,   e: '⚡' },
+                    { l: 'Prepared',        v: totalPrepared, e: '✓' },
+                    { l: 'Applied (7d)',    v: totalApplied,  e: '🚀' },
+                  ].map(({ l, v, e }) => (
+                    <div key={l} style={{ ...C.card, textAlign: 'center', padding: 16 }}>
+                      <div style={{ fontSize: 18, marginBottom: 6 }}>{e}</div>
+                      <div style={{ fontSize: 26, fontWeight: 700, ...gT }}>{v}</div>
+                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.36)', marginTop: 3 }}>{l}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Header row */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.36)' }}>{totalQueued} job{totalQueued !== 1 ? 's' : ''} in queue</div>
+                  <button onClick={() => setAutoAddForm(v => !v)} style={{ ...C.btn, fontSize: 12, padding: '8px 18px' }}>+ Add to Queue</button>
+                </div>
+
+                {/* Add to queue form */}
+                {autoAddForm && (
+                  <div style={{ ...C.card, marginBottom: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 14, ...gT, display: 'inline-block' }}>Add Job to Queue</div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
+                      <input value={autoNewJob.title} onChange={e => setAutoNewJob(j => ({ ...j, title: e.target.value }))} placeholder="Job title" style={{ ...C.inp, fontSize: 12 }} />
+                      <input value={autoNewJob.company} onChange={e => setAutoNewJob(j => ({ ...j, company: e.target.value }))} placeholder="Company" style={{ ...C.inp, fontSize: 12 }} />
+                    </div>
+                    <input value={autoNewJob.url} onChange={e => setAutoNewJob(j => ({ ...j, url: e.target.value }))} placeholder="Job URL" style={{ ...C.inp, fontSize: 12, marginBottom: 10 }} />
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <select value={autoNewJob.platform} onChange={e => setAutoNewJob(j => ({ ...j, platform: e.target.value }))} style={{ ...C.inp, fontSize: 12, width: 'auto' }}>
+                        {['LinkedIn', 'WTTJ', 'Indeed', 'Glassdoor', 'StepStone', 'Other'].map(p => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                      <button onClick={() => {
+                        if (!autoNewJob.title.trim() || !autoNewJob.company.trim()) return
+                        addToAutoQueue(autoNewJob)
+                        setAutoNewJob({ title: '', company: '', url: '', platform: 'LinkedIn' })
+                        setAutoAddForm(false)
+                      }} style={{ ...C.btn, fontSize: 12, padding: '9px 18px' }}>Add</button>
+                      <button onClick={() => setAutoAddForm(false)} style={{ ...C.ghost, fontSize: 12, padding: '9px 14px' }}>Cancel</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Job cards */}
+                {autoQueue.filter(j => j.status !== 'skipped').length === 0 && (
+                  <div style={{ ...C.card, textAlign: 'center', padding: 48, color: 'rgba(255,255,255,0.28)', fontSize: 13 }}>
+                    <div style={{ fontSize: 32, marginBottom: 12 }}>⚡</div>
+                    <div>No jobs in queue.</div>
+                    <div style={{ fontSize: 11, marginTop: 6 }}>Add jobs manually or use the Log button in the Intelligence tab.</div>
+                  </div>
+                )}
+
+                {autoQueue.filter(j => j.status !== 'skipped').map(job => {
+                  const isPrepping = autoPrepping.has(job.id)
+                  const expandedCover = autoExpanded[`${job.id}-cover`]
+                  const expandedForm  = autoExpanded[`${job.id}-form`]
+                  const toggle = (key) => setAutoExpanded(e => ({ ...e, [key]: !e[key] }))
+                  const statusColor = job.status === 'prepared' ? '#34D399' : job.status === 'applied' ? '#818CF8' : 'rgba(255,255,255,0.3)'
+                  const platformColor = job.platform === 'LinkedIn' ? '#0A66C2' : job.platform === 'WTTJ' ? '#3DDC84' : 'rgba(255,255,255,0.2)'
+                  return (
+                    <div key={job.id} style={{ ...C.card, marginBottom: 12 }}>
+                      {/* Card header */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                            <span style={{ fontSize: 14, fontWeight: 700 }}>{job.title}</span>
+                            <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 20, background: platformColor, color: 'white' }}>{job.platform}</span>
+                            <span style={{ fontSize: 10, fontWeight: 600, color: statusColor, textTransform: 'uppercase', letterSpacing: 0.8 }}>{job.status}</span>
+                          </div>
+                          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)' }}>{job.company}{job.dateAdded ? ` · ${job.dateAdded}` : ''}</div>
+                        </div>
+                        {job.matchScore > 0 && (
+                          <div style={{ textAlign: 'center', flexShrink: 0, marginLeft: 12 }}>
+                            <div style={{ fontSize: 22, fontWeight: 800, ...gT, lineHeight: 1 }}>{job.matchScore}<span style={{ fontSize: 11 }}>%</span></div>
+                            <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', letterSpacing: 0.8 }}>MATCH</div>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Cover letter expander */}
+                      <div style={{ marginBottom: 8 }}>
+                        <button onClick={() => toggle(`${job.id}-cover`)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)', fontSize: 12, cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 5 }}>
+                          {expandedCover ? '▾' : '▸'} Cover Letter {job.coverLetter ? '✓' : '(not generated)'}
+                        </button>
+                        {expandedCover && (
+                          <div style={{ marginTop: 8, padding: 12, background: 'rgba(255,255,255,0.03)', borderRadius: 8, fontSize: 12, lineHeight: 1.7, color: 'rgba(255,255,255,0.75)', whiteSpace: 'pre-wrap' }}>
+                            {job.coverLetter || <span style={{ color: 'rgba(255,255,255,0.25)' }}>Click "Prepare with AI" to generate.</span>}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Form answers expander */}
+                      <div style={{ marginBottom: 14 }}>
+                        <button onClick={() => toggle(`${job.id}-form`)} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.5)', fontSize: 12, cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center', gap: 5 }}>
+                          {expandedForm ? '▾' : '▸'} Form Answers {Object.keys(job.formAnswers || {}).length > 0 ? '✓' : '(not generated)'}
+                        </button>
+                        {expandedForm && (
+                          <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                            {Object.keys(job.formAnswers || {}).length === 0
+                              ? <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.25)', padding: 4 }}>Click "Prepare with AI" to generate.</span>
+                              : Object.entries(job.formAnswers).map(([k, v]) => (
+                                <div key={k} style={{ padding: 10, background: 'rgba(255,255,255,0.03)', borderRadius: 8 }}>
+                                  <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.35)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.8 }}>{FORM_LABELS[k] || k}</div>
+                                  <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.75)', lineHeight: 1.6 }}>{v}</div>
+                                </div>
+                              ))
+                            }
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Action buttons */}
+                      <div style={{ display: 'flex', gap: 8, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 12 }}>
+                        <button onClick={() => prepareApplication(job.id)} disabled={isPrepping} style={{ ...C.btn, fontSize: 11, padding: '7px 14px', opacity: isPrepping ? 0.6 : 1 }}>
+                          {isPrepping ? '↻ Preparing…' : '✦ Prepare with AI'}
+                        </button>
+                        {job.url && (
+                          <button onClick={() => { window.open(job.url, '_blank'); setAutoQueue(prev => prev.map(j => j.id === job.id ? { ...j, status: 'applied' } : j)) }} style={{ ...C.ghost, fontSize: 11, padding: '7px 14px' }}>
+                            Open & Apply →
+                          </button>
+                        )}
+                        {job.coverLetter && (
+                          <button onClick={() => navigator.clipboard.writeText(job.coverLetter).then(() => showToast('Cover letter copied', 2000))} style={{ ...C.ghost, fontSize: 11, padding: '7px 14px' }}>
+                            Copy Letter
+                          </button>
+                        )}
+                        <button onClick={() => setAutoQueue(prev => prev.map(j => j.id === job.id ? { ...j, status: 'skipped' } : j))} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.28)', fontSize: 11, cursor: 'pointer', marginLeft: 'auto', padding: '7px 0' }}>
+                          Skip
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+
+                {/* Skipped jobs */}
+                {autoQueue.some(j => j.status === 'skipped') && (
+                  <div style={{ marginTop: 24 }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.2)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 10 }}>Skipped</div>
+                    {autoQueue.filter(j => j.status === 'skipped').map(job => (
+                      <div key={job.id} style={{ ...C.card, marginBottom: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', opacity: 0.45 }}>
+                        <div>
+                          <div style={{ fontSize: 13, fontWeight: 600 }}>{job.title}</div>
+                          <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>{job.company}</div>
+                        </div>
+                        <button onClick={() => setAutoQueue(prev => prev.map(j => j.id === job.id ? { ...j, status: 'pending' } : j))} style={{ ...C.ghost, fontSize: 11, padding: '6px 12px' }}>Restore</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )
           })()}
