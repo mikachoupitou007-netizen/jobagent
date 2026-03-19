@@ -152,6 +152,25 @@
     .err { color: #F87171; font-size: 11px; margin-top: 6px; }
     .success { color: #34D399; font-size: 11px; margin-top: 6px; }
 
+    /* ── Easy Apply ── */
+    .easy-apply-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      font-size: 10px; font-weight: 700; padding: 4px 10px; border-radius: 20px;
+      background: rgba(52,211,153,0.15); color: #34D399;
+      border: 1px solid rgba(52,211,153,0.3); margin-bottom: 10px;
+    }
+    .prepare-section { margin-bottom: 10px; }
+    .prepare-box {
+      background: rgba(52,211,153,0.06); border: 1px solid rgba(52,211,153,0.2);
+      border-radius: 10px; padding: 12px 14px; margin-bottom: 10px;
+    }
+    .prepare-label { font-size: 9px; font-weight: 600; color: rgba(52,211,153,0.6); letter-spacing: 1.2px; text-transform: uppercase; margin-bottom: 8px; }
+    .prepare-text { font-size: 11px; color: rgba(255,255,255,0.72); line-height: 1.7; white-space: pre-wrap; }
+    .form-answer { padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .form-answer:last-child { border-bottom: none; }
+    .form-answer-q { font-size: 9px; font-weight: 600; color: rgba(255,255,255,0.3); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 3px; }
+    .form-answer-a { font-size: 11px; color: rgba(255,255,255,0.7); line-height: 1.6; }
+
     /* ── Spinner ── */
     @keyframes spin { to { transform: rotate(360deg); } }
     .spin { display: inline-block; animation: spin 0.8s linear infinite; }
@@ -192,12 +211,16 @@
 
     <div id="state-detected">
       <span class="detection-badge found" id="detection-badge">● Detected</span>
+      <div id="easy-apply-section" style="display:none">
+        <div class="easy-apply-badge">⚡ Easy Apply Detected</div>
+      </div>
       <div class="job-card" id="job-card">
         <div class="job-title" id="job-title">—</div>
         <div class="job-company" id="job-company">—</div>
         <span class="job-site-badge" id="job-site"></span>
       </div>
       <div class="actions">
+        <button class="btn btn-primary" id="btn-prepare-apply" style="display:none">⚡ Prepare &amp; Apply</button>
         <button class="btn btn-primary" id="btn-analyse">✦ Analyse with AI</button>
         <div style="display:flex;gap:7px">
           <button class="btn btn-ghost" id="btn-log" style="flex:1">+ Log to Tracker</button>

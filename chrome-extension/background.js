@@ -29,7 +29,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             'anthropic-dangerous-direct-browser-access': 'true',
           },
           body: JSON.stringify({
-            model: 'claude-sonnet-4-20250514',
+            model: 'claude-haiku-4-5-20251001',
             max_tokens: 1500,
             messages: [{ role: 'user', content: prompt }],
           }),
@@ -55,5 +55,50 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     })()
 
     return true  // keep message channel open for async sendResponse
+  }
+
+  if (message.type === 'PREPARE_APPLY') {
+    const { apiKey, job } = message
+    console.log('[JobAgent BG] PREPARE_APPLY — job:', job?.title, '/', job?.company)
+
+    ;(async () => {
+      try {
+        const prompt = `Write application materials for Michael Van Gyseghem applying to "${job.title}" at "${job.company}". Profile: Strategic Sales & BD Leader, 8+ years B2B experience in SaaS/Fintech/Real Estate, based in Brussels, trilingual EN/FR/NL.
+
+Return ONLY valid JSON, no markdown:
+{"coverLetter":"Professional 3-paragraph cover letter under 200 words tailored to this role","formAnswers":{"whyThisRole":"2 sentence answer tailored to the role and company","describeExperience":"2 sentence answer using Michael's real experience","salaryExpectation":"€80,000–€110,000 depending on full package","noticePeriod":"Available immediately","motivation":"1 sentence answer"}}`
+
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+            'anthropic-dangerous-direct-browser-access': 'true',
+          },
+          body: JSON.stringify({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 800,
+            messages: [{ role: 'user', content: prompt }],
+          }),
+        })
+
+        const rawText = await response.text()
+        console.log('[JobAgent BG] PREPARE_APPLY — status:', response.status)
+        if (!response.ok) { sendResponse({ ok: false, error: `HTTP ${response.status}: ${rawText}` }); return }
+
+        const data = JSON.parse(rawText)
+        const text = data.content?.[0]?.text || ''
+        const start = text.indexOf('{'), end = text.lastIndexOf('}')
+        if (start === -1 || end === -1) { sendResponse({ ok: false, error: 'No JSON in response' }); return }
+        const parsed = JSON.parse(text.slice(start, end + 1))
+        sendResponse({ ok: true, coverLetter: parsed.coverLetter || '', formAnswers: parsed.formAnswers || {} })
+      } catch (err) {
+        console.log('[JobAgent BG] PREPARE_APPLY error:', err.message)
+        sendResponse({ ok: false, error: err.message })
+      }
+    })()
+
+    return true
   }
 })

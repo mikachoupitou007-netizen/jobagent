@@ -100,6 +100,102 @@ function showNotDetected() {
 }
 
 
+// ── Easy Apply ────────────────────────────────────────────────────────────────
+let preparedData = null  // { coverLetter, formAnswers } — stored after PREPARE_APPLY
+
+function loadEasyApplyStatus() {
+  chrome.storage.local.get('jobagent_easy_apply', ({ jobagent_easy_apply: ea }) => {
+    if (ea?.detected) {
+      $('easy-apply-section').style.display = 'block'
+      $('btn-prepare-apply').style.display = 'flex'
+    } else {
+      $('easy-apply-section').style.display = 'none'
+      $('btn-prepare-apply').style.display = 'none'
+    }
+  })
+}
+
+function prepareAndApply() {
+  if (!currentJob) return
+  setBtn('btn-prepare-apply', true, 'Preparing…')
+  showResult('')
+
+  chrome.storage.sync.get('apiKey', ({ apiKey: key }) => {
+    if (!key) {
+      showResult('<p class="err">No API key set — open Settings first.</p>')
+      setBtn('btn-prepare-apply', false, '⚡ Prepare &amp; Apply')
+      return
+    }
+
+    chrome.runtime.sendMessage({ type: 'PREPARE_APPLY', apiKey: key, job: currentJob }, (response) => {
+      if (chrome.runtime.lastError || !response?.ok) {
+        showResult(`<p class="err">Preparation failed: ${chrome.runtime.lastError?.message || response?.error}</p>`)
+        setBtn('btn-prepare-apply', false, '⚡ Prepare &amp; Apply')
+        return
+      }
+
+      preparedData = { coverLetter: response.coverLetter, formAnswers: response.formAnswers }
+      const fa = response.formAnswers || {}
+      const answersHtml = Object.entries({
+        'Why this role': fa.whyThisRole,
+        'Experience': fa.describeExperience,
+        'Salary expectation': fa.salaryExpectation,
+        'Notice period': fa.noticePeriod,
+      }).filter(([, v]) => v).map(([q, a]) => `
+        <div class="form-answer">
+          <div class="form-answer-q">${q}</div>
+          <div class="form-answer-a">${a}</div>
+        </div>`).join('')
+
+      const letterId = 'cl-' + Date.now()
+      showResult(`
+        <div class="prepare-box">
+          <div class="prepare-label">Cover Letter</div>
+          <div class="prepare-text">${response.coverLetter}</div>
+          <div style="margin-top:8px;display:flex;gap:6px">
+            <button class="btn btn-ghost btn-xs" id="${letterId}-copy">Copy ↗</button>
+          </div>
+        </div>
+        <div class="prepare-box">
+          <div class="prepare-label">Form Answers</div>
+          ${answersHtml}
+        </div>
+        <button class="btn btn-primary" id="btn-fill-form" style="margin-bottom:8px">⚡ Fill Form Automatically</button>
+      `)
+
+      document.getElementById(`${letterId}-copy`).addEventListener('click', () => {
+        navigator.clipboard.writeText(response.coverLetter).catch(() => {})
+        document.getElementById(`${letterId}-copy`).textContent = 'Copied ✓'
+      })
+
+      document.getElementById('btn-fill-form').addEventListener('click', fillForm)
+      setBtn('btn-prepare-apply', false, '⚡ Prepare &amp; Apply')
+    })
+  })
+}
+
+function fillForm() {
+  if (!preparedData) return
+  const btn = document.getElementById('btn-fill-form')
+  if (btn) { btn.disabled = true; btn.textContent = 'Filling…' }
+
+  chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+    if (!tab?.id) return
+    chrome.tabs.sendMessage(tab.id, { type: 'FILL_FORM', ...preparedData }, (response) => {
+      if (chrome.runtime.lastError || !response?.ok) {
+        if (btn) { btn.disabled = false; btn.textContent = '⚡ Fill Form Automatically' }
+        const errEl = document.createElement('p')
+        errEl.className = 'err'
+        errEl.textContent = 'Fill failed: ' + (chrome.runtime.lastError?.message || response?.error || 'Unknown error')
+        document.getElementById('result-area').appendChild(errEl)
+      } else {
+        if (btn) { btn.disabled = false; btn.textContent = '✓ Form Filled!' }
+      }
+    })
+  })
+}
+
+
 // ── Analyse with AI ───────────────────────────────────────────────────────────
 function analyseJob() {
   if (!currentJob) return
@@ -319,6 +415,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     showScreen('main')
     await loadJobData()
+    loadEasyApplyStatus()
   })
 
   // Setup screen
@@ -340,6 +437,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   })
 
   // Main screen buttons
+  $('btn-prepare-apply').addEventListener('click', prepareAndApply)
   $('btn-analyse').addEventListener('click', analyseJob)
   $('btn-cover').addEventListener('click', generateCoverLetter)
   $('btn-log').addEventListener('click', () => logJob())

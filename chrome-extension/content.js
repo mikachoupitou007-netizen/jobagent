@@ -245,6 +245,34 @@ function extract() {
 }
 
 
+// ── Easy Apply detection ──────────────────────────────────────────────────────
+function detectEasyApply() {
+  const buttonSelectors = [
+    '.jobs-apply-button--top-card button',
+    'button.jobs-apply-button',
+    'button[aria-label="Easy Apply"]',
+    'button[aria-label*="Candidature simplifi\u00e9e"]',
+  ]
+  let buttonFound = false
+  let buttonEl = null
+  for (const sel of buttonSelectors) {
+    const el = document.querySelector(sel)
+    if (el) { buttonFound = true; buttonEl = el; break }
+  }
+  const modalOpen = !!(
+    document.querySelector('.jobs-easy-apply-modal') ||
+    document.querySelector('.jobs-easy-apply-content') ||
+    document.querySelector('[data-test-modal-id="easy-apply-modal"]')
+  )
+  return { detected: buttonFound || modalOpen, buttonFound, modalOpen, buttonEl }
+}
+
+function storeEasyApplyStatus() {
+  const { detected, buttonFound, modalOpen } = detectEasyApply()
+  chrome.storage.local.set({ jobagent_easy_apply: { detected, buttonFound, modalOpen } })
+}
+
+
 // ── Guard: reject search/intermediate pages ───────────────────────────────────
 function isValidJob(job) {
   if (!job.title || !job.company) return false
@@ -288,7 +316,10 @@ function waitForLinkedIn() {
 
   const observer = new MutationObserver(() => {
     clearTimeout(debounceTimer)
-    debounceTimer = setTimeout(() => attemptExtraction('mutation debounce'), DEBOUNCE_MS)
+    debounceTimer = setTimeout(() => {
+      attemptExtraction('mutation debounce')
+      storeEasyApplyStatus()
+    }, DEBOUNCE_MS)
   })
   observer.observe(document.body, { childList: true, subtree: true })
 
@@ -375,6 +406,65 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
     })
   }
+
+  if (msg.type === 'FILL_FORM') {
+    const { coverLetter, formAnswers } = msg
+
+    const fillField = (el, value) => {
+      const proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype
+      Object.getOwnPropertyDescriptor(proto, 'value').set.call(el, value)
+      el.dispatchEvent(new Event('input',  { bubbles: true }))
+      el.dispatchEvent(new Event('change', { bubbles: true }))
+    }
+
+    const fillModal = () => {
+      const modal = document.querySelector('.jobs-easy-apply-modal, .jobs-easy-apply-content, [data-test-modal-id="easy-apply-modal"]')
+      if (!modal) {
+        console.log('[JobAgent] FILL_FORM — modal not found after wait')
+        sendResponse({ ok: false, error: 'Easy Apply modal not found' })
+        return
+      }
+      console.log('[JobAgent] FILL_FORM — modal found, scanning fields')
+
+      modal.querySelectorAll('textarea').forEach(ta => {
+        const ctx = (ta.closest('label, [class*="form-item"], [class*="field"], [class*="jobs-easy-apply"]')?.textContent || '').toLowerCase()
+        console.log('[JobAgent] FILL_FORM — textarea context:', ctx.slice(0, 80))
+        if (ctx.includes('cover') || ctx.includes('letter') || ctx.includes('motivation') || ctx.includes('motivatie') || ctx.includes('why') || ctx.includes('pourquoi')) {
+          fillField(ta, coverLetter); console.log('[JobAgent] FILL_FORM — filled cover letter textarea')
+        } else if (ctx.includes('experience') || ctx.includes('describe') || ctx.includes('ervar')) {
+          fillField(ta, formAnswers.describeExperience || ''); console.log('[JobAgent] FILL_FORM — filled experience textarea')
+        } else if (ctx.includes('salary') || ctx.includes('salaire') || ctx.includes('loon') || ctx.includes('wage')) {
+          fillField(ta, formAnswers.salaryExpectation || ''); console.log('[JobAgent] FILL_FORM — filled salary textarea')
+        } else if (!ta.value) {
+          fillField(ta, coverLetter); console.log('[JobAgent] FILL_FORM — filled textarea (default) with cover letter')
+        }
+      })
+
+      modal.querySelectorAll('input[type="text"], input[type="number"], input:not([type])').forEach(inp => {
+        const ctx = ((inp.closest('label, [class*="form-item"], [class*="field"]')?.textContent || '') + ' ' + (inp.placeholder || '')).toLowerCase()
+        console.log('[JobAgent] FILL_FORM — input context:', ctx.slice(0, 80))
+        if (ctx.includes('salary') || ctx.includes('salaire') || ctx.includes('loon') || ctx.includes('wage')) {
+          fillField(inp, formAnswers.salaryExpectation || ''); console.log('[JobAgent] FILL_FORM — filled salary input')
+        } else if (ctx.includes('notice') || ctx.includes('availability') || ctx.includes('beschikbaar') || ctx.includes('disponib')) {
+          fillField(inp, formAnswers.noticePeriod || 'Available immediately'); console.log('[JobAgent] FILL_FORM — filled notice period input')
+        }
+      })
+
+      sendResponse({ ok: true })
+    }
+
+    const { modalOpen, buttonEl } = detectEasyApply()
+    if (!modalOpen && buttonEl) {
+      console.log('[JobAgent] FILL_FORM — clicking Easy Apply button')
+      buttonEl.click()
+      setTimeout(fillModal, 1500)
+    } else if (modalOpen) {
+      fillModal()
+    } else {
+      sendResponse({ ok: false, error: 'Easy Apply button not found' })
+    }
+  }
+
   return true
 })
 
@@ -383,6 +473,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 if (host.includes('linkedin.com')) {
   // LinkedIn: defer until React renders the job card
   waitForLinkedIn()
+  storeEasyApplyStatus()
 } else {
   // Other sites: extract immediately and cache
   const job = extract()
