@@ -365,7 +365,10 @@ function loadTracker() {
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 function loadSettings() {
-  $('settings-key').value = apiKey ? '••••••••••••••••' : ''
+  $('settings-key').value = ''
+  $('settings-key').placeholder = apiKey ? `Current key ends …${apiKey.slice(-4)} — paste new key to replace` : 'sk-ant-api03-...'
+  const hint = $('settings-key-hint')
+  if (hint) hint.textContent = apiKey ? `Stored · ends …${apiKey.slice(-4)}` : 'No key saved yet'
   chrome.storage.local.get('trackedJobs', ({ trackedJobs = [] }) => {
     $('jobs-count').textContent = `${trackedJobs.length} job${trackedJobs.length !== 1 ? 's' : ''} tracked`
   })
@@ -375,28 +378,43 @@ function saveSettings() {
   const raw = $('settings-key').value.trim()
   const msg = $('settings-msg')
 
-  // Only update key if user typed something new (not the masked placeholder)
-  const promises = []
-  if (raw && !raw.startsWith('•')) {
-    const trimmed = raw.trim()
-    apiKey = trimmed
-    promises.push(new Promise(res => {
-      chrome.storage.sync.set({ apiKey: trimmed }, () => {
-        // Immediately read back to verify what was actually stored
-        chrome.storage.sync.get('apiKey', ({ apiKey: saved }) => {
-          console.log('[JobAgent popup] API key saved — length:', saved ? saved.length : 0, '— full value:', saved)
-          res()
-        })
-      })
-    }))
-  }
+  console.log('[JobAgent popup] saveSettings called — raw value length:', raw.length, '— starts with bullet:', raw.startsWith('\u2022'), '— first char code:', raw.charCodeAt(0))
 
-  Promise.all(promises).then(() => {
+  // Only update key if user typed something new (not the masked placeholder)
+  if (raw && !raw.startsWith('\u2022')) {
+    const trimmed = raw.trim()
+    console.log('[JobAgent popup] Saving API key — length:', trimmed.length, '— ends with:', trimmed.slice(-4))
+
+    chrome.storage.sync.set({ apiKey: trimmed }, () => {
+      if (chrome.runtime.lastError) {
+        console.log('[JobAgent popup] chrome.storage.sync.set ERROR:', chrome.runtime.lastError.message)
+        msg.className = 'err'
+        msg.textContent = 'Save failed: ' + chrome.runtime.lastError.message
+        msg.style.display = 'block'
+        return
+      }
+
+      console.log('[JobAgent popup] Saved successfully, verifying...')
+      chrome.storage.sync.get('apiKey', ({ apiKey: saved }) => {
+        console.log('[JobAgent popup] Verification — retrieved length:', saved ? saved.length : 0, '— ends with:', saved ? saved.slice(-4) : '(empty)')
+
+        apiKey = trimmed
+        const hint = $('settings-key-hint')
+        if (hint) hint.textContent = `Stored · ends …${trimmed.slice(-4)}`
+
+        msg.className = 'success'
+        msg.textContent = `✓ API key saved (…${trimmed.slice(-4)})`
+        msg.style.display = 'block'
+        setTimeout(() => { msg.style.display = 'none'; showScreen('main') }, 1500)
+      })
+    })
+  } else {
+    console.log('[JobAgent popup] No new key entered — skipping save, showing saved status')
     msg.className = 'success'
-    msg.textContent = '✓ Settings saved.'
+    msg.textContent = apiKey ? `✓ Key already saved (…${apiKey.slice(-4)})` : '✓ No key to save.'
     msg.style.display = 'block'
     setTimeout(() => { msg.style.display = 'none'; showScreen('main') }, 1200)
-  })
+  }
 }
 
 
