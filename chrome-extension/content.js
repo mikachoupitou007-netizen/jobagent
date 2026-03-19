@@ -247,23 +247,38 @@ function extract() {
 
 // ── Easy Apply detection ──────────────────────────────────────────────────────
 function detectEasyApply() {
-  const buttonSelectors = [
-    '.jobs-apply-button--top-card button',
-    'button.jobs-apply-button',
-    'button[aria-label="Easy Apply"]',
-    'button[aria-label*="Candidature simplifi\u00e9e"]',
-  ]
+  const EASY_APPLY_TEXTS = ['easy apply', 'candidature simplifi\u00e9e', 'eenvoudig solliciteren']
+
+  // Broad scan: check every button and anchor on the page
+  const allButtons = Array.from(document.querySelectorAll('button'))
+  const allLinks   = Array.from(document.querySelectorAll('a'))
+  console.log('[JobAgent] detectEasyApply — checking', allButtons.length, 'buttons and', allLinks.length, 'links')
+
   let buttonFound = false
   let buttonEl = null
-  for (const sel of buttonSelectors) {
-    const el = document.querySelector(sel)
-    if (el) { buttonFound = true; buttonEl = el; break }
+
+  const isEasyApply = (el) => {
+    const text  = (el.innerText  || el.textContent || '').toLowerCase()
+    const label = (el.getAttribute('aria-label') || '').toLowerCase()
+    return EASY_APPLY_TEXTS.some(t => text.includes(t) || label.includes(t))
   }
+
+  for (const el of [...allButtons, ...allLinks]) {
+    if (isEasyApply(el)) {
+      buttonFound = true
+      buttonEl = el
+      console.log('[JobAgent] Easy Apply button found: ' + (el.innerText || el.textContent || '').trim())
+      break
+    }
+  }
+
   const modalOpen = !!(
     document.querySelector('.jobs-easy-apply-modal') ||
     document.querySelector('.jobs-easy-apply-content') ||
     document.querySelector('[data-test-modal-id="easy-apply-modal"]')
   )
+
+  console.log('[JobAgent] detectEasyApply — result: buttonFound=' + buttonFound + ' modalOpen=' + modalOpen)
   return { detected: buttonFound || modalOpen, buttonFound, modalOpen, buttonEl }
 }
 
@@ -366,6 +381,7 @@ if (host.includes('linkedin.com')) {
         attempt++
         console.log('[JobAgent] LinkedIn re-extraction attempt', attempt, 'of', maxAttempts)
         const job = extract()
+        storeEasyApplyStatus()
         if (isValidJob(job)) {
           console.log('[JobAgent] LinkedIn re-extraction succeeded on attempt', attempt)
           chrome.storage.local.set({ jobagent_current_job: job })
@@ -408,6 +424,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === 'FILL_FORM') {
+    console.log('[JobAgent] FILL_FORM message received')
     const { coverLetter, formAnswers } = msg
 
     const fillField = (el, value) => {
@@ -417,52 +434,99 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       el.dispatchEvent(new Event('change', { bubbles: true }))
     }
 
-    const fillModal = () => {
-      const modal = document.querySelector('.jobs-easy-apply-modal, .jobs-easy-apply-content, [data-test-modal-id="easy-apply-modal"]')
-      if (!modal) {
-        console.log('[JobAgent] FILL_FORM — modal not found after wait')
-        sendResponse({ ok: false, error: 'Easy Apply modal not found' })
-        return
-      }
-      console.log('[JobAgent] FILL_FORM — modal found, scanning fields')
+    const fillFields = () => {
+      // ── Discovery: log every visible input and textarea on the page ──
+      const isVisible = el => el.offsetParent !== null && el.style.display !== 'none' && el.style.visibility !== 'hidden'
 
-      modal.querySelectorAll('textarea').forEach(ta => {
-        const ctx = (ta.closest('label, [class*="form-item"], [class*="field"], [class*="jobs-easy-apply"]')?.textContent || '').toLowerCase()
-        console.log('[JobAgent] FILL_FORM — textarea context:', ctx.slice(0, 80))
-        if (ctx.includes('cover') || ctx.includes('letter') || ctx.includes('motivation') || ctx.includes('motivatie') || ctx.includes('why') || ctx.includes('pourquoi')) {
-          fillField(ta, coverLetter); console.log('[JobAgent] FILL_FORM — filled cover letter textarea')
-        } else if (ctx.includes('experience') || ctx.includes('describe') || ctx.includes('ervar')) {
-          fillField(ta, formAnswers.describeExperience || ''); console.log('[JobAgent] FILL_FORM — filled experience textarea')
+      const allInputs    = Array.from(document.querySelectorAll('input')).filter(isVisible)
+      const allTextareas = Array.from(document.querySelectorAll('textarea')).filter(isVisible)
+
+      console.log('[JobAgent] FILL_FORM — visible inputs found:', allInputs.length)
+      allInputs.forEach((inp, i) => {
+        console.log(`[JobAgent] FILL_FORM — input[${i}] type=${inp.type} id=${inp.id} name=${inp.name} placeholder="${inp.placeholder}" aria-label="${inp.getAttribute('aria-label') || ''}"`)
+      })
+      console.log('[JobAgent] FILL_FORM — visible textareas found:', allTextareas.length)
+      allTextareas.forEach((ta, i) => {
+        console.log(`[JobAgent] FILL_FORM — textarea[${i}] id=${ta.id} name=${ta.name} placeholder="${ta.placeholder}" aria-label="${ta.getAttribute('aria-label') || ''}"`)
+      })
+
+      let filled = 0
+
+      // ── Email ────────────────────────────────────────────────────────
+      allInputs.filter(inp => inp.type === 'email' || (inp.name || '').toLowerCase().includes('email') || (inp.id || '').toLowerCase().includes('email')).forEach(inp => {
+        fillField(inp, 'michael.vangyseghem@gmail.com')
+        console.log('[JobAgent] FILL_FORM — filled EMAIL:', inp.id || inp.name || inp.type)
+        filled++
+      })
+
+      // ── Phone / Tel ──────────────────────────────────────────────────
+      allInputs.filter(inp => {
+        const ctx = (inp.type + ' ' + inp.name + ' ' + inp.id + ' ' + (inp.getAttribute('aria-label') || '') + ' ' + inp.placeholder).toLowerCase()
+        return inp.type === 'tel' || ctx.includes('phone') || ctx.includes('mobile') || ctx.includes('tel')
+      }).forEach(inp => {
+        const ctx = (inp.name + ' ' + inp.id + ' ' + (inp.getAttribute('aria-label') || '') + ' ' + inp.placeholder).toLowerCase()
+        const val = (ctx.includes('country') || ctx.includes('code') || ctx.includes('prefix')) ? '+32' : '456032636'
+        fillField(inp, val)
+        console.log('[JobAgent] FILL_FORM — filled PHONE (' + val + '):', inp.id || inp.name)
+        filled++
+      })
+
+      // ── Text / Number inputs: label-based routing ────────────────────
+      allInputs.filter(inp => ['text', 'number', ''].includes(inp.type)).forEach(inp => {
+        const labelEl = inp.id ? document.querySelector(`label[for="${inp.id}"]`) : null
+        const ctx = ((labelEl?.textContent || '') + ' ' + (inp.getAttribute('aria-label') || '') + ' ' + inp.placeholder + ' ' + inp.name + ' ' + inp.id).toLowerCase()
+        if (ctx.includes('salary') || ctx.includes('salaire') || ctx.includes('loon') || ctx.includes('wage') || ctx.includes('compensation')) {
+          fillField(inp, formAnswers?.salaryExpectation || '€80,000–€110,000')
+          console.log('[JobAgent] FILL_FORM — filled SALARY input:', inp.id || inp.name)
+          filled++
+        } else if (ctx.includes('notice') || ctx.includes('availability') || ctx.includes('beschikbaar') || ctx.includes('disponib') || ctx.includes('start date')) {
+          fillField(inp, formAnswers?.noticePeriod || 'Available immediately')
+          console.log('[JobAgent] FILL_FORM — filled NOTICE input:', inp.id || inp.name)
+          filled++
+        }
+      })
+
+      // ── Textareas ────────────────────────────────────────────────────
+      allTextareas.forEach(ta => {
+        const labelEl = ta.id ? document.querySelector(`label[for="${ta.id}"]`) : null
+        const ctx = ((labelEl?.textContent || '') + ' ' + (ta.getAttribute('aria-label') || '') + ' ' + ta.placeholder + ' ' + ta.name + ' ' + ta.id).toLowerCase()
+        if (ctx.includes('why') || ctx.includes('pourquoi') || ctx.includes('waarom') || ctx.includes('motivation') || ctx.includes('motivatie') || ctx.includes('cover') || ctx.includes('letter')) {
+          fillField(ta, formAnswers?.whyThisRole || coverLetter)
+          console.log('[JobAgent] FILL_FORM — filled WHY/MOTIVATION textarea:', ta.id || ta.name)
+          filled++
+        } else if (ctx.includes('experience') || ctx.includes('describe') || ctx.includes('ervaring') || ctx.includes('background')) {
+          fillField(ta, formAnswers?.describeExperience || coverLetter)
+          console.log('[JobAgent] FILL_FORM — filled EXPERIENCE textarea:', ta.id || ta.name)
+          filled++
         } else if (ctx.includes('salary') || ctx.includes('salaire') || ctx.includes('loon') || ctx.includes('wage')) {
-          fillField(ta, formAnswers.salaryExpectation || ''); console.log('[JobAgent] FILL_FORM — filled salary textarea')
-        } else if (!ta.value) {
-          fillField(ta, coverLetter); console.log('[JobAgent] FILL_FORM — filled textarea (default) with cover letter')
-        }
-      })
-
-      modal.querySelectorAll('input[type="text"], input[type="number"], input:not([type])').forEach(inp => {
-        const ctx = ((inp.closest('label, [class*="form-item"], [class*="field"]')?.textContent || '') + ' ' + (inp.placeholder || '')).toLowerCase()
-        console.log('[JobAgent] FILL_FORM — input context:', ctx.slice(0, 80))
-        if (ctx.includes('salary') || ctx.includes('salaire') || ctx.includes('loon') || ctx.includes('wage')) {
-          fillField(inp, formAnswers.salaryExpectation || ''); console.log('[JobAgent] FILL_FORM — filled salary input')
+          fillField(ta, formAnswers?.salaryExpectation || '€80,000–€110,000')
+          console.log('[JobAgent] FILL_FORM — filled SALARY textarea:', ta.id || ta.name)
+          filled++
         } else if (ctx.includes('notice') || ctx.includes('availability') || ctx.includes('beschikbaar') || ctx.includes('disponib')) {
-          fillField(inp, formAnswers.noticePeriod || 'Available immediately'); console.log('[JobAgent] FILL_FORM — filled notice period input')
+          fillField(ta, formAnswers?.noticePeriod || 'Available immediately')
+          console.log('[JobAgent] FILL_FORM — filled NOTICE textarea:', ta.id || ta.name)
+          filled++
+        } else if (!ta.value) {
+          fillField(ta, coverLetter)
+          console.log('[JobAgent] FILL_FORM — filled textarea (default cover letter):', ta.id || ta.name)
+          filled++
         }
       })
 
-      sendResponse({ ok: true })
+      console.log('[JobAgent] FILL_FORM — done, fields filled:', filled)
+      sendResponse({ ok: true, filled })
     }
 
-    const { modalOpen, buttonEl } = detectEasyApply()
-    if (!modalOpen && buttonEl) {
-      console.log('[JobAgent] FILL_FORM — clicking Easy Apply button')
+    // Click button if modal not yet open, then wait 2000ms for animation
+    const { buttonEl } = detectEasyApply()
+    const modalAlreadyOpen = !!(document.querySelector('[role="dialog"]') || document.querySelector('.artdeco-modal') || document.querySelector('.jobs-easy-apply-modal'))
+    if (!modalAlreadyOpen && buttonEl) {
+      console.log('[JobAgent] FILL_FORM — clicking Easy Apply button, waiting 2000ms')
       buttonEl.click()
-      setTimeout(fillModal, 1500)
-    } else if (modalOpen) {
-      fillModal()
     } else {
-      sendResponse({ ok: false, error: 'Easy Apply button not found' })
+      console.log('[JobAgent] FILL_FORM — modal already open (or no button), waiting 2000ms')
     }
+    setTimeout(fillFields, 3000)
   }
 
   return true
@@ -473,7 +537,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 if (host.includes('linkedin.com')) {
   // LinkedIn: defer until React renders the job card
   waitForLinkedIn()
+  // Run immediately — button may already be in DOM on fast page loads
   storeEasyApplyStatus()
+  // Run again after 2s — LinkedIn sometimes renders the Apply button after the job card
+  setTimeout(storeEasyApplyStatus, 2000)
+  setTimeout(storeEasyApplyStatus, 5000)
 } else {
   // Other sites: extract immediately and cache
   const job = extract()

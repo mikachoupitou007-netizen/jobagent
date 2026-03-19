@@ -181,6 +181,7 @@ function fillForm() {
 
   chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
     if (!tab?.id) return
+    console.log('[JobAgent popup] Sending FILL_FORM to tab ID:', tab.id)
     chrome.tabs.sendMessage(tab.id, { type: 'FILL_FORM', ...preparedData }, (response) => {
       if (chrome.runtime.lastError || !response?.ok) {
         if (btn) { btn.disabled = false; btn.textContent = '⚡ Fill Form Automatically' }
