@@ -1302,7 +1302,7 @@ Return ONLY valid JSON, no markdown:
                               </div>
                             </div>
                             <div style={{ display: 'flex', gap: 7, marginTop: 14, borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: 14 }}>
-                              <button onClick={() => { setJd(`${job.title} at ${job.company}\n${job.location}\n\n${(job.keyRequirements || []).join(', ')}\n\n${job.matchReason}`); setTab('analyser') }} style={{ ...C.ghost, fontSize: 11, padding: '6px 14px' }}>◈ Analyse</button>
+                              <button onClick={() => { setAnalysis(null); setAErr(''); setJd(`${job.title} at ${job.company}\n${job.location}\n\n${(job.keyRequirements || []).join(', ')}\n\n${job.matchReason}`); setTab('analyser') }} style={{ ...C.ghost, fontSize: 11, padding: '6px 14px' }}>◈ Analyse</button>
                               <button onClick={() => { setApps(p => p.some(a => a.url === job.applyUrl) ? p : [{ id: Date.now(), company: job.company, role: job.title, date: today, status: 'Applied', notes: '', url: job.applyUrl || '' }, ...p]); showToast(`✓ "${job.title}" logged to tracker`); setQueuePrompt({ title: job.title, company: job.company, url: job.applyUrl || '', platform: job.applyUrl?.includes('linkedin') ? 'LinkedIn' : 'Other', matchScore: job.matchScore || 0 }) }} style={{ ...C.ghost, fontSize: 11, padding: '6px 14px' }}>◉ Log</button>
                               {job.applyUrl && <button onClick={() => window.open(job.applyUrl, '_blank')} style={{ ...C.btn, fontSize: 11, padding: '6px 14px' }}>Apply →</button>}
                             </div>
