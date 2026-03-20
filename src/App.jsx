@@ -561,7 +561,7 @@ Return ONLY valid JSON, no markdown:
     if (!window.google) { setGmailErr('Google Identity Services not loaded — refresh and try again.'); return }
     const client = window.google.accounts.oauth2.initTokenClient({
       client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
-      scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/userinfo.email',
+      scope: 'https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/userinfo.email',
       callback: async (tokenResponse) => {
         if (tokenResponse.error) { setGmailErr('Auth failed: ' + tokenResponse.error); return }
         setGmailToken(tokenResponse.access_token)
