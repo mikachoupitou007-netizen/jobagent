@@ -216,7 +216,7 @@ export default function App() {
   const [wizardStep, setWizardStep]       = useState(1)
   const [wInput, setWInput]               = useState({ title: '', industry: '', location: '', keyword: '' })
   const [toast, setToast]                 = useState(null)
-  const [apiKeyMissing]                   = useState(() => !import.meta.env.VITE_ANTHROPIC_API_KEY)
+  const [apiKeyMissing]                   = useState(() => !import.meta.env.VITE_ANTHROPIC_API_KEY && !localStorage.getItem('jobagent_api_key'))
   const [intelJobs, setIntelJobs]         = useState(() => { try { const s = localStorage.getItem('jobagent_intelligence'); return s ? JSON.parse(s).jobs : [] } catch { return [] } })
   const [intelScannedAt, setIntelScannedAt] = useState(() => { try { const s = localStorage.getItem('jobagent_intelligence'); return s ? JSON.parse(s).scannedAt : null } catch { return null } })
   const [intelLoading, setIntelLoading]   = useState(false)
@@ -241,24 +241,43 @@ export default function App() {
     return ''
   }
 
-  // Robustly extract JSON from a Claude response that may have markdown fences or preamble
+  // Robustly extract JSON using bracket-counting — handles apostrophes, accents, nested objects
   const extractJSON = (raw, preferArray = false) => {
     const cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim()
-    // Try direct parse first
+    // Try direct parse first (fastest path)
     try { return JSON.parse(cleaned) } catch {}
-    // Find outermost { } or [ ]
-    const openObj = cleaned.indexOf('{'), openArr = cleaned.indexOf('[')
-    const closeObj = cleaned.lastIndexOf('}'), closeArr = cleaned.lastIndexOf(']')
-    const useArray = preferArray && openArr !== -1 && (openObj === -1 || openArr < openObj)
-    if (useArray && closeArr !== -1) {
-      try { return JSON.parse(cleaned.slice(openArr, closeArr + 1)) } catch {}
+
+    const bracketExtract = (str, open, close) => {
+      const start = str.indexOf(open)
+      if (start === -1) return null
+      let depth = 0
+      let inString = false
+      let escape = false
+      for (let i = start; i < str.length; i++) {
+        const ch = str[i]
+        if (escape) { escape = false; continue }
+        if (ch === '\\' && inString) { escape = true; continue }
+        if (ch === '"') { inString = !inString; continue }
+        if (inString) continue
+        if (ch === open)  depth++
+        if (ch === close) { depth--; if (depth === 0) return str.slice(start, i + 1) }
+      }
+      return null
     }
-    if (openObj !== -1 && closeObj !== -1) {
-      try { return JSON.parse(cleaned.slice(openObj, closeObj + 1)) } catch {}
+
+    // Prefer array if caller expects one and [ appears before {
+    if (preferArray) {
+      const arrStart = cleaned.indexOf('['), objStart = cleaned.indexOf('{')
+      if (arrStart !== -1 && (objStart === -1 || arrStart < objStart)) {
+        const sub = bracketExtract(cleaned, '[', ']')
+        if (sub) try { return JSON.parse(sub) } catch {}
+      }
     }
-    if (openArr !== -1 && closeArr !== -1) {
-      try { return JSON.parse(cleaned.slice(openArr, closeArr + 1)) } catch {}
-    }
+    const objSub = bracketExtract(cleaned, '{', '}')
+    if (objSub) try { return JSON.parse(objSub) } catch {}
+    const arrSub = bracketExtract(cleaned, '[', ']')
+    if (arrSub) try { return JSON.parse(arrSub) } catch {}
+
     throw new Error('No valid JSON found in response: ' + raw.slice(0, 120))
   }
 
@@ -471,15 +490,7 @@ export default function App() {
   const delApp    = (id)    => setApps(p => p.filter(a => a.id !== id))
 
   const parseIntelJobs = (raw) => {
-    // Try via shared extractor first (handles fences, preamble, etc.)
     try { const r = extractJSON(raw, true); return Array.isArray(r) ? r : [r] } catch {}
-    // Response was cut off — extract all complete objects via regex
-    const matches = [...raw.matchAll(/\{[^{}]*\}/gs)]
-    const complete = []
-    for (const m of matches) {
-      try { complete.push(JSON.parse(m[0])) } catch {}
-    }
-    if (complete.length > 0) return complete
     throw new Error('No parseable job objects found in response: ' + raw.slice(0, 120))
   }
 
