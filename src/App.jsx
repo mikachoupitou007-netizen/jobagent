@@ -295,35 +295,60 @@ export default function App() {
     localStorage.setItem('jobagent_followups', JSON.stringify(followups))
   }, [followups])
 
-  // Auto-detect followup opportunities whenever the tracker changes
+  // Auto-detect followup opportunities and clean up stale ones whenever tracker or followups change
   useEffect(() => {
-    const todayStr = new Date().toISOString().slice(0, 10)
+    const todayStr    = new Date().toISOString().slice(0, 10)
     const tomorrowStr = new Date(Date.now() + 86400000).toISOString().slice(0, 10)
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+
+    // Map appId → current status for quick lookup
+    const appStatusMap = Object.fromEntries(apps.map(a => [a.id, a.status]))
+
     setFollowups(prev => {
       let updated = [...prev]
       let changed = false
+
+      // ── Cleanup: remove pending/drafted followups no longer relevant ──
+      updated = updated.filter(fu => {
+        if (fu.status === 'sent') return true  // never remove history
+        const appStatus = appStatusMap[fu.appId]
+        if (appStatus === undefined) return true  // app deleted — keep followup as orphan
+        if (fu.type === 'interview-thankyou' && appStatus !== 'Interview') {
+          console.log('[JobAgent] Removing stale followup:', fu.type, 'for', fu.company, '— app status is now', appStatus)
+          changed = true
+          return false
+        }
+        if (fu.type === 'rejection-response' && appStatus !== 'Rejected') {
+          console.log('[JobAgent] Removing stale followup:', fu.type, 'for', fu.company, '— app status is now', appStatus)
+          changed = true
+          return false
+        }
+        return true
+      })
+
+      // ── Detection: create new followups for current statuses ──
       apps.forEach(app => {
         const hasType = (type) => updated.some(f => f.appId === app.id && f.type === type)
+        const emailMatch = (app.notes || '').match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/)
+        const recipientEmail = emailMatch ? emailMatch[0] : ''
+
         if (app.status === 'Applied' && app.date <= sevenDaysAgo && !hasType('applied-followup')) {
-          const emailMatch = (app.notes || '').match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/)
-          updated.push({ id: Date.now() + Math.random(), appId: app.id, company: app.company, role: app.role, type: 'applied-followup', status: 'pending', dueDate: todayStr, draftedEmail: null, createdAt: todayStr, recipientEmail: emailMatch ? emailMatch[0] : '' })
+          updated.push({ id: Date.now() + Math.random(), appId: app.id, company: app.company, role: app.role, type: 'applied-followup', status: 'pending', dueDate: todayStr, draftedEmail: null, createdAt: todayStr, recipientEmail })
           changed = true
         }
         if (app.status === 'Interview' && !hasType('interview-thankyou')) {
-          const emailMatch = (app.notes || '').match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/)
-          updated.push({ id: Date.now() + Math.random(), appId: app.id, company: app.company, role: app.role, type: 'interview-thankyou', status: 'pending', dueDate: tomorrowStr, draftedEmail: null, createdAt: todayStr, recipientEmail: emailMatch ? emailMatch[0] : '' })
+          updated.push({ id: Date.now() + Math.random(), appId: app.id, company: app.company, role: app.role, type: 'interview-thankyou', status: 'pending', dueDate: tomorrowStr, draftedEmail: null, createdAt: todayStr, recipientEmail })
           changed = true
         }
         if (app.status === 'Rejected' && !hasType('rejection-response')) {
-          const emailMatch = (app.notes || '').match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/)
-          updated.push({ id: Date.now() + Math.random(), appId: app.id, company: app.company, role: app.role, type: 'rejection-response', status: 'pending', dueDate: todayStr, draftedEmail: null, createdAt: todayStr, recipientEmail: emailMatch ? emailMatch[0] : '' })
+          updated.push({ id: Date.now() + Math.random(), appId: app.id, company: app.company, role: app.role, type: 'rejection-response', status: 'pending', dueDate: todayStr, draftedEmail: null, createdAt: todayStr, recipientEmail })
           changed = true
         }
       })
+
       return changed ? updated : prev
     })
-  }, [apps])
+  }, [apps, followups])
 
   // Read URL params injected by the Chrome extension "Log to Tracker" button
   useEffect(() => {
@@ -1145,6 +1170,9 @@ Return ONLY valid JSON, no markdown:
                       {a.notes && <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.24)', marginTop: 1, fontStyle: 'italic' }}>{a.notes}</div>}
                     </div>
                     <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.26)', flexShrink: 0 }}>{a.date}</span>
+                    {followups.some(f => f.appId === a.id && (f.status === 'pending' || f.status === 'drafted')) && (
+                      <span title="Follow-up pending" style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: 'rgba(251,146,60,0.15)', color: '#FB923C', flexShrink: 0, whiteSpace: 'nowrap' }}>↗ Follow-up</span>
+                    )}
                     <select value={a.status} onChange={e => updStatus(a.id, e.target.value)} style={{ background: ST[a.status]?.b, border: 'none', borderRadius: 20, padding: '3px 10px', color: ST[a.status]?.c, fontWeight: 600, fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', outline: 'none' }}>
                       {Object.keys(ST).map(s => <option key={s} value={s} style={{ background: '#1a1a2e', color: 'white' }}>{s}</option>)}
                     </select>
