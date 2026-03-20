@@ -234,10 +234,32 @@ export default function App() {
   const [outputLanguage, setOutputLanguage] = useState(() => localStorage.getItem('jobagent_output_language') || 'EN')
 
   const getLanguageInstruction = (lang = outputLanguage) => {
+    console.log('[JobAgent] getLanguageInstruction called — outputLanguage:', outputLanguage, '— lang param:', lang)
     const keyWarning = ' IMPORTANT: always use these exact English JSON key names — never translate them. Only the string VALUES should be in the target language.'
     if (lang === 'FR') return '\n\nWrite all text values in French. Use formal French appropriate for professional job applications in Belgium.' + keyWarning
     if (lang === 'NL') return '\n\nSchrijf alle tekstwaarden in het Nederlands. Gebruik formeel Nederlands dat geschikt is voor professionele sollicitaties in België.' + keyWarning
     return ''
+  }
+
+  // Robustly extract JSON from a Claude response that may have markdown fences or preamble
+  const extractJSON = (raw, preferArray = false) => {
+    const cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim()
+    // Try direct parse first
+    try { return JSON.parse(cleaned) } catch {}
+    // Find outermost { } or [ ]
+    const openObj = cleaned.indexOf('{'), openArr = cleaned.indexOf('[')
+    const closeObj = cleaned.lastIndexOf('}'), closeArr = cleaned.lastIndexOf(']')
+    const useArray = preferArray && openArr !== -1 && (openObj === -1 || openArr < openObj)
+    if (useArray && closeArr !== -1) {
+      try { return JSON.parse(cleaned.slice(openArr, closeArr + 1)) } catch {}
+    }
+    if (openObj !== -1 && closeObj !== -1) {
+      try { return JSON.parse(cleaned.slice(openObj, closeObj + 1)) } catch {}
+    }
+    if (openArr !== -1 && closeArr !== -1) {
+      try { return JSON.parse(cleaned.slice(openArr, closeArr + 1)) } catch {}
+    }
+    throw new Error('No valid JSON found in response: ' + raw.slice(0, 120))
   }
 
   const setLanguage = (lang) => {
@@ -449,11 +471,8 @@ export default function App() {
   const delApp    = (id)    => setApps(p => p.filter(a => a.id !== id))
 
   const parseIntelJobs = (raw) => {
-    // Try full parse first
-    const start = raw.indexOf('['), end = raw.lastIndexOf(']')
-    if (start !== -1 && end !== -1) {
-      try { return JSON.parse(raw.slice(start, end + 1)) } catch {}
-    }
+    // Try via shared extractor first (handles fences, preamble, etc.)
+    try { const r = extractJSON(raw, true); return Array.isArray(r) ? r : [r] } catch {}
     // Response was cut off — extract all complete objects via regex
     const matches = [...raw.matchAll(/\{[^{}]*\}/gs)]
     const complete = []
@@ -556,9 +575,8 @@ Return ONLY a JSON array, no markdown, no text before or after:
 Return ONLY valid JSON, no markdown:
 {"coverLetter":"3 concise paragraphs under 200 words","formAnswers":{"whyThisRole":"2 sentence answer tailored to the role","describeExperience":"2 sentence answer using real experience","salaryExpectation":"€80,000–€110,000 depending on full package","availability":"Available immediately","whyThisCompany":"1 sentence answer"}}` + getLanguageInstruction()
       const text = await callClaude(prompt)
-      const start = text.indexOf('{'), end = text.lastIndexOf('}')
       try {
-        const parsed = JSON.parse(text.slice(start, end + 1))
+        const parsed = extractJSON(text)
         setAutoQueue(prev => prev.map(j => j.id === jobId
           ? { ...j, coverLetter: parsed.coverLetter || '', formAnswers: parsed.formAnswers || {}, status: 'prepared' }
           : j))
@@ -581,7 +599,7 @@ Return ONLY valid JSON, no markdown:
       const prompt = `You are an expert career coach. Analyse this job description for the candidate and return ONLY valid JSON, no markdown, no code fences, no preamble.\n\nCANDIDATE:\n${prof}\n\nJOB DESCRIPTION:\n${jd}\n\nReturn exactly:\n{"jobTitle":"title","company":"company or Unknown","matchScore":85,"matchedSkills":["skill1","skill2"],"gaps":["gap1"],"tailoredSummary":"3-sentence first-person summary tailored to this role using Michael's actual experience","coverLetter":"Professional 3-paragraph cover letter for this exact role. Sign as Michael Van Gyseghem.","keyTalkingPoints":["point1","point2","point3"]}` + getLanguageInstruction()
       const raw = await callClaude(prompt)
       try {
-        setAnalysis(JSON.parse(raw.replace(/```json|```/g, '').trim()))
+        setAnalysis(extractJSON(raw))
       } catch (parseErr) {
         console.error('[JobAgent] analyseJD parse error — raw response:', raw.slice(0, 300))
         setAErr(`Parse error — unexpected response: "${raw.slice(0, 200)}"`)
@@ -598,7 +616,7 @@ Return ONLY valid JSON, no markdown:
       const prompt = `You are an expert interview coach. Generate 6 targeted interview questions with STAR-format answers using this candidate's specific experience. Return ONLY valid JSON, no markdown.\n\nCANDIDATE: ${MICHAEL.name}\nEXPERIENCE: ${exp}\nSKILLS: ${MICHAEL.skills.join(', ')}\n\nJOB DESCRIPTION:\n${iJd}\n\nReturn exactly:\n{"questions":[{"question":"?","type":"Behavioral","difficulty":"Medium","suggestedAnswer":"STAR-format answer using Michael's real experience (3-4 sentences)"}]}` + getLanguageInstruction()
       const raw = await callClaude(prompt)
       try {
-        setQs(JSON.parse(raw.replace(/```json|```/g, '').trim()))
+        setQs(extractJSON(raw))
       } catch (parseErr) {
         console.error('[JobAgent] genQuestions parse error — raw response:', raw.slice(0, 300))
         setIErr(`Parse error — unexpected response: "${raw.slice(0, 200)}"`)
@@ -696,9 +714,8 @@ Return ONLY valid JSON, no markdown:
     }
     try {
       const raw = await callClaude(prompts[fu.type])
-      const start = raw.indexOf('{'), end = raw.lastIndexOf('}')
       try {
-        const parsed = JSON.parse(raw.slice(start, end + 1))
+        const parsed = extractJSON(raw)
         setFollowups(p => p.map(f => f.id === fuId ? { ...f, draftedEmail: parsed, status: 'drafted' } : f))
       } catch (parseErr) {
         console.error('[JobAgent] draftFollowup parse error — raw:', raw.slice(0, 300))
