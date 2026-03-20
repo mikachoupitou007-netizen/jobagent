@@ -158,6 +158,7 @@ const NAV = [
   { id: 'tracker',       label: 'Applications',   icon: '◉' },
   { id: 'intelligence',  label: 'Intelligence',   icon: '◎' },
   { id: 'autoapply',     label: 'Auto-Apply',     icon: '⚡' },
+  { id: 'followups',     label: 'Follow-ups',     icon: '✉' },
   { id: 'interview',     label: 'Interview Prep', icon: '◇' },
   { id: 'profile',       label: 'My Profile',     icon: '◍' },
   { id: 'gmail',         label: 'Gmail Agent',    icon: '✉' },
@@ -224,6 +225,22 @@ export default function App() {
   const [autoNewJob, setAutoNewJob]       = useState({ title: '', company: '', url: '', platform: 'LinkedIn' })
   const [autoPrepping, setAutoPrepping]   = useState(new Set())
   const [queuePrompt, setQueuePrompt]     = useState(null)
+  const [followups, setFollowups]         = useState(() => { try { const s = localStorage.getItem('jobagent_followups'); return s ? JSON.parse(s) : [] } catch { return [] } })
+  const [fuDrafting, setFuDrafting]       = useState({})
+  const [fuSending, setFuSending]         = useState({})
+  const [fuExpanded, setFuExpanded]       = useState({})
+  const [outputLanguage, setOutputLanguage] = useState(() => localStorage.getItem('jobagent_output_language') || 'EN')
+
+  const getLanguageInstruction = (lang = outputLanguage) => {
+    if (lang === 'FR') return '\n\nWrite your entire response in French. Use formal French appropriate for professional job applications in Belgium.'
+    if (lang === 'NL') return '\n\nSchrijf je volledige antwoord in het Nederlands. Gebruik formeel Nederlands dat geschikt is voor professionele sollicitaties in België.'
+    return ''
+  }
+
+  const setLanguage = (lang) => {
+    setOutputLanguage(lang)
+    localStorage.setItem('jobagent_output_language', lang)
+  }
 
   const showToast = (msg, ms = 4000) => {
     setToast(msg)
@@ -252,6 +269,37 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('jobagent_autoapply_queue', JSON.stringify(autoQueue))
   }, [autoQueue])
+
+  useEffect(() => {
+    localStorage.setItem('jobagent_followups', JSON.stringify(followups))
+  }, [followups])
+
+  // Auto-detect followup opportunities whenever the tracker changes
+  useEffect(() => {
+    const todayStr = new Date().toISOString().slice(0, 10)
+    const tomorrowStr = new Date(Date.now() + 86400000).toISOString().slice(0, 10)
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    setFollowups(prev => {
+      let updated = [...prev]
+      let changed = false
+      apps.forEach(app => {
+        const hasType = (type) => updated.some(f => f.appId === app.id && f.type === type)
+        if (app.status === 'Applied' && app.date <= sevenDaysAgo && !hasType('applied-followup')) {
+          updated.push({ id: Date.now() + Math.random(), appId: app.id, company: app.company, role: app.role, type: 'applied-followup', status: 'pending', dueDate: todayStr, draftedEmail: null, createdAt: todayStr })
+          changed = true
+        }
+        if (app.status === 'Interview' && !hasType('interview-thankyou')) {
+          updated.push({ id: Date.now() + Math.random(), appId: app.id, company: app.company, role: app.role, type: 'interview-thankyou', status: 'pending', dueDate: tomorrowStr, draftedEmail: null, createdAt: todayStr })
+          changed = true
+        }
+        if (app.status === 'Rejected' && !hasType('rejection-response')) {
+          updated.push({ id: Date.now() + Math.random(), appId: app.id, company: app.company, role: app.role, type: 'rejection-response', status: 'pending', dueDate: todayStr, draftedEmail: null, createdAt: todayStr })
+          changed = true
+        }
+      })
+      return changed ? updated : prev
+    })
+  }, [apps])
 
   // Read URL params injected by the Chrome extension "Log to Tracker" button
   useEffect(() => {
@@ -369,7 +417,7 @@ export default function App() {
     const prompt = `Generate 5 realistic job opportunities in Belgium/Europe for: Senior Sales and BD professional Brussels Belgium SaaS Fintech Real Estate trilingual. Roles: Sales Director, BD Manager, Account Executive, Head of Sales, Commercial Director. Companies active in Belgium/Europe.
 
 Return ONLY a JSON array, no markdown, no text before or after:
-[{"title":"","company":"","location":"","matchScore":80,"applyUrl":"https://www.linkedin.com/jobs/search/?keywords=sales+director&location=Belgium","matchReason":""}]`
+[{"title":"","company":"","location":"","matchScore":80,"applyUrl":"https://www.linkedin.com/jobs/search/?keywords=sales+director&location=Belgium","matchReason":""}]` + getLanguageInstruction()
 
     const doFetch = async () => fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -453,7 +501,7 @@ Return ONLY a JSON array, no markdown, no text before or after:
       const prompt = `Write application materials for ${MICHAEL.name} applying to "${job.title}" at "${job.company}". Profile: ${profile}
 
 Return ONLY valid JSON, no markdown:
-{"coverLetter":"3 concise paragraphs under 200 words","formAnswers":{"whyThisRole":"2 sentence answer tailored to the role","describeExperience":"2 sentence answer using real experience","salaryExpectation":"€80,000–€110,000 depending on full package","availability":"Available immediately","whyThisCompany":"1 sentence answer"}}`
+{"coverLetter":"3 concise paragraphs under 200 words","formAnswers":{"whyThisRole":"2 sentence answer tailored to the role","describeExperience":"2 sentence answer using real experience","salaryExpectation":"€80,000–€110,000 depending on full package","availability":"Available immediately","whyThisCompany":"1 sentence answer"}}` + getLanguageInstruction()
       const text = await callClaude(prompt)
       const start = text.indexOf('{'), end = text.lastIndexOf('}')
       const parsed = JSON.parse(text.slice(start, end + 1))
@@ -472,7 +520,7 @@ Return ONLY valid JSON, no markdown:
     setAnalysing(true); setAnalysis(null); setAErr('')
     try {
       const prof = `Name:${MICHAEL.name}\nTitle:${MICHAEL.title}\nSummary:${MICHAEL.summary}\nSkills:${MICHAEL.skills.join(', ')}\nExperience:${MICHAEL.experience.map(e => `${e.role} at ${e.company} (${e.period})`).join(' | ')}\nLanguages:${MICHAEL.languages.map(l => `${l.l} ${l.lv}`).join(', ')}`
-      const prompt = `You are an expert career coach. Analyse this job description for the candidate and return ONLY valid JSON, no markdown, no code fences, no preamble.\n\nCANDIDATE:\n${prof}\n\nJOB DESCRIPTION:\n${jd}\n\nReturn exactly:\n{"jobTitle":"title","company":"company or Unknown","matchScore":85,"matchedSkills":["skill1","skill2"],"gaps":["gap1"],"tailoredSummary":"3-sentence first-person summary tailored to this role using Michael's actual experience","coverLetter":"Professional 3-paragraph cover letter for this exact role. Sign as Michael Van Gyseghem.","keyTalkingPoints":["point1","point2","point3"]}`
+      const prompt = `You are an expert career coach. Analyse this job description for the candidate and return ONLY valid JSON, no markdown, no code fences, no preamble.\n\nCANDIDATE:\n${prof}\n\nJOB DESCRIPTION:\n${jd}\n\nReturn exactly:\n{"jobTitle":"title","company":"company or Unknown","matchScore":85,"matchedSkills":["skill1","skill2"],"gaps":["gap1"],"tailoredSummary":"3-sentence first-person summary tailored to this role using Michael's actual experience","coverLetter":"Professional 3-paragraph cover letter for this exact role. Sign as Michael Van Gyseghem.","keyTalkingPoints":["point1","point2","point3"]}` + getLanguageInstruction()
       const raw = await callClaude(prompt)
       setAnalysis(JSON.parse(raw.replace(/```json|```/g, '').trim()))
     } catch (e) { setAErr('Analysis failed — check your API key in the .env file and try again.') }
@@ -484,7 +532,7 @@ Return ONLY valid JSON, no markdown:
     setGenerating(true); setQs(null); setIErr('')
     try {
       const exp = MICHAEL.experience.map(e => `${e.role} at ${e.company}: ${e.bullets[0]}`).join(' | ')
-      const prompt = `You are an expert interview coach. Generate 6 targeted interview questions with STAR-format answers using this candidate's specific experience. Return ONLY valid JSON, no markdown.\n\nCANDIDATE: ${MICHAEL.name}\nEXPERIENCE: ${exp}\nSKILLS: ${MICHAEL.skills.join(', ')}\n\nJOB DESCRIPTION:\n${iJd}\n\nReturn exactly:\n{"questions":[{"question":"?","type":"Behavioral","difficulty":"Medium","suggestedAnswer":"STAR-format answer using Michael's real experience (3-4 sentences)"}]}`
+      const prompt = `You are an expert interview coach. Generate 6 targeted interview questions with STAR-format answers using this candidate's specific experience. Return ONLY valid JSON, no markdown.\n\nCANDIDATE: ${MICHAEL.name}\nEXPERIENCE: ${exp}\nSKILLS: ${MICHAEL.skills.join(', ')}\n\nJOB DESCRIPTION:\n${iJd}\n\nReturn exactly:\n{"questions":[{"question":"?","type":"Behavioral","difficulty":"Medium","suggestedAnswer":"STAR-format answer using Michael's real experience (3-4 sentences)"}]}` + getLanguageInstruction()
       const raw = await callClaude(prompt)
       setQs(JSON.parse(raw.replace(/```json|```/g, '').trim()))
     } catch (e) { setIErr('Generation failed — please try again.') }
@@ -555,6 +603,48 @@ Return ONLY valid JSON, no markdown:
       setGmailEmails(emails)
     } catch (e) { setGmailErr('Failed to scan inbox: ' + e.message) }
     setGmailLoading(false)
+  }
+
+  const draftFollowup = async (fuId) => {
+    const fu = followups.find(f => f.id === fuId)
+    if (!fu) return
+    setFuDrafting(p => ({ ...p, [fuId]: true }))
+    const langInstr = getLanguageInstruction()
+    const prompts = {
+      'applied-followup': `Write a concise 3-paragraph professional follow-up email from Michael Van Gyseghem to ${fu.company} checking on the status of his application for the ${fu.role} role. Be polite, express continued interest, and ask for a timeline update. Sign as Michael Van Gyseghem. Return ONLY valid JSON: {"subject":"Re: Application for ${fu.role}","body":"email body here"}` + langInstr,
+      'interview-thankyou': `Write a warm, professional thank-you email from Michael Van Gyseghem to ${fu.company} after interviewing for the ${fu.role} position. Thank them for their time, reiterate his strong interest and fit, and mention looking forward to next steps. Keep it under 150 words. Return ONLY valid JSON: {"subject":"Thank you — ${fu.role} interview","body":"email body here"}` + langInstr,
+      'rejection-response': `Write a gracious, professional response from Michael Van Gyseghem to ${fu.company} after being rejected for the ${fu.role} role. Thank them for their time, express appreciation for the opportunity, and politely ask to be considered for future suitable roles. Keep it brief and positive. Return ONLY valid JSON: {"subject":"Re: ${fu.role} application","body":"email body here"}` + langInstr,
+    }
+    try {
+      const raw = await callClaude(prompts[fu.type])
+      const start = raw.indexOf('{'), end = raw.lastIndexOf('}')
+      const parsed = JSON.parse(raw.slice(start, end + 1))
+      setFollowups(p => p.map(f => f.id === fuId ? { ...f, draftedEmail: parsed, status: 'drafted' } : f))
+    } catch (e) { showToast('Draft failed: ' + e.message, 3000) }
+    setFuDrafting(p => ({ ...p, [fuId]: false }))
+  }
+
+  const sendFollowup = async (fuId) => {
+    const fu = followups.find(f => f.id === fuId)
+    if (!fu?.draftedEmail) return
+    if (!gmailToken) { showToast('Connect Gmail first in the Gmail Agent tab', 3000); return }
+    setFuSending(p => ({ ...p, [fuId]: true }))
+    try {
+      const to = 'michael.vangyseghem@gmail.com'
+      const emailLines = [`To: ${to}`, `Subject: ${fu.draftedEmail.subject}`, 'Content-Type: text/plain; charset=utf-8', '', fu.draftedEmail.body].join('\r\n')
+      const encoded = btoa(unescape(encodeURIComponent(emailLines))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+      const res = await fetch('https://www.googleapis.com/gmail/v1/users/me/messages/send', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + gmailToken, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ raw: encoded }),
+      })
+      if (!res.ok) { const e = await res.text(); throw new Error(e) }
+      const sentDate = new Date().toISOString().slice(0, 10)
+      setFollowups(p => p.map(f => f.id === fuId ? { ...f, status: 'sent' } : f))
+      setApps(p => p.map(a => a.id === fu.appId ? { ...a, notes: (a.notes ? a.notes + ' · ' : '') + `Followed up on ${sentDate}` } : a))
+      showToast(`✓ Follow-up sent to ${fu.company}`, 3000)
+    } catch (e) { showToast('Send failed: ' + e.message, 3000) }
+    setFuSending(p => ({ ...p, [fuId]: false }))
   }
 
   const draftReply = async (id, from, subject, snippet) => {
@@ -828,7 +918,15 @@ Return ONLY valid JSON, no markdown:
           <span style={{ fontWeight: 700, fontSize: 14, letterSpacing: '-0.3px' }}>JobAgent</span>
           <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.28)', background: 'rgba(255,255,255,0.07)', padding: '2px 7px', borderRadius: 20 }}>v1.0 beta</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          {/* Language selector */}
+          <div style={{ display: 'flex', gap: 3, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 8, padding: 3 }}>
+            {['EN', 'FR', 'NL'].map(lang => (
+              <button key={lang} onClick={() => setLanguage(lang)} style={{ fontSize: 10, fontWeight: 700, padding: '3px 8px', borderRadius: 5, border: 'none', cursor: 'pointer', fontFamily: 'inherit', background: outputLanguage === lang ? G : 'transparent', color: outputLanguage === lang ? 'white' : 'rgba(255,255,255,0.35)', transition: 'all 0.15s' }}>
+                {lang}
+              </button>
+            ))}
+          </div>
           {user.avatar
             ? <img src={user.avatar} alt="" style={{ width: 26, height: 26, borderRadius: '50%', objectFit: 'cover' }} />
             : <div style={{ width: 26, height: 26, borderRadius: '50%', background: G, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: 'white' }}>{user.name?.[0] ?? '?'}</div>
@@ -1130,6 +1228,150 @@ Return ONLY valid JSON, no markdown:
               </div>
             </div>
           )}
+
+          {/* ── FOLLOW-UPS ── */}
+          {tab === 'followups' && (() => {
+            const FU_TYPE = {
+              'applied-followup':  { label: 'Application Follow-up', color: '#FB923C', bg: 'rgba(251,146,60,0.12)' },
+              'interview-thankyou':{ label: 'Interview Thank-you',   color: '#60A5FA', bg: 'rgba(96,165,250,0.12)' },
+              'rejection-response':{ label: 'Rejection Response',    color: '#C084FC', bg: 'rgba(192,132,252,0.12)' },
+            }
+            const pending  = followups.filter(f => f.status === 'pending')
+            const drafted  = followups.filter(f => f.status === 'drafted')
+            const sent     = followups.filter(f => f.status === 'sent')
+            const weekAgo  = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
+            const sentThisWeek = sent.filter(f => f.createdAt >= weekAgo).length
+            const responseRate = sent.length === 0 ? 0 : Math.round((sent.filter(f => apps.find(a => a.id === f.appId)?.status === 'Interview').length / sent.length) * 100)
+
+            const FuCard = ({ fu }) => {
+              const meta = FU_TYPE[fu.type] || FU_TYPE['applied-followup']
+              const isExpanded = fuExpanded[fu.id]
+              const isDrafting = fuDrafting[fu.id]
+              const isSending  = fuSending[fu.id]
+              return (
+                <div style={{ ...C.card, marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 3 }}>{fu.company}</div>
+                      <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginBottom: 6 }}>{fu.role}</div>
+                      <span style={{ fontSize: 10, fontWeight: 600, padding: '3px 8px', borderRadius: 20, background: meta.bg, color: meta.color }}>{meta.label}</span>
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0, marginLeft: 12 }}>
+                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginBottom: 4 }}>Due</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: fu.dueDate < new Date().toISOString().slice(0,10) && fu.status !== 'sent' ? '#F87171' : 'rgba(255,255,255,0.6)' }}>{fu.dueDate}</div>
+                    </div>
+                  </div>
+
+                  {/* Expanded email preview */}
+                  {isExpanded && fu.draftedEmail && (
+                    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: 14, marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Subject</div>
+                      <input
+                        defaultValue={fu.draftedEmail.subject}
+                        onChange={e => setFollowups(p => p.map(f => f.id === fu.id ? { ...f, draftedEmail: { ...f.draftedEmail, subject: e.target.value } } : f))}
+                        style={{ ...C.inp, fontSize: 12, marginBottom: 10 }}
+                      />
+                      <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Body</div>
+                      <textarea
+                        defaultValue={fu.draftedEmail.body}
+                        onChange={e => setFollowups(p => p.map(f => f.id === fu.id ? { ...f, draftedEmail: { ...f.draftedEmail, body: e.target.value } } : f))}
+                        rows={8}
+                        style={{ ...C.inp, fontSize: 12, resize: 'vertical', lineHeight: 1.6 }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Action buttons */}
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {fu.status !== 'sent' && (
+                      <button onClick={() => draftFollowup(fu.id)} disabled={isDrafting} style={{ ...C.btn, fontSize: 11, padding: '7px 14px', opacity: isDrafting ? 0.6 : 1 }}>
+                        {isDrafting ? '↻ Drafting…' : '✦ Draft with AI'}
+                      </button>
+                    )}
+                    {fu.draftedEmail && fu.status !== 'sent' && (
+                      <>
+                        <button onClick={() => setFuExpanded(p => ({ ...p, [fu.id]: !p[fu.id] }))} style={{ ...C.ghost, fontSize: 11, padding: '7px 14px' }}>
+                          {isExpanded ? 'Hide Draft' : 'Review Draft'}
+                        </button>
+                        <button onClick={() => sendFollowup(fu.id)} disabled={isSending} style={{ ...C.btn, fontSize: 11, padding: '7px 14px', opacity: isSending ? 0.6 : 1 }}>
+                          {isSending ? '↻ Sending…' : '↗ Send'}
+                        </button>
+                      </>
+                    )}
+                    {fu.status === 'sent' && (
+                      <span style={{ fontSize: 11, color: '#34D399', padding: '7px 0', display: 'flex', alignItems: 'center', gap: 5 }}>✓ Sent</span>
+                    )}
+                    <button onClick={() => setFollowups(p => p.filter(f => f.id !== fu.id))} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.25)', fontSize: 11, cursor: 'pointer', marginLeft: 'auto', padding: '7px 0' }}>
+                      Dismiss
+                    </button>
+                  </div>
+                </div>
+              )
+            }
+
+            return (
+              <div>
+                <div style={{ marginBottom: 24 }}>
+                  <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.5px', marginBottom: 4 }}>Smart <span style={gT}>Follow-ups</span></h1>
+                  <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.36)' }}>AI-drafted follow-up emails auto-detected from your tracker.</p>
+                </div>
+
+                {/* Stats bar */}
+                <div style={{ display: 'flex', gap: 10, marginBottom: 28 }}>
+                  {[
+                    { label: 'Pending',       value: pending.length,  color: '#FB923C' },
+                    { label: 'Sent this week', value: sentThisWeek,   color: '#34D399' },
+                    { label: 'Response rate',  value: responseRate + '%', color: '#C084FC' },
+                  ].map(s => (
+                    <div key={s.label} style={{ flex: 1, ...C.card, textAlign: 'center', padding: '14px 10px' }}>
+                      <div style={{ fontSize: 22, fontWeight: 800, color: s.color, marginBottom: 3 }}>{s.value}</div>
+                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8 }}>{s.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Pending */}
+                {pending.length > 0 && (
+                  <div style={{ marginBottom: 28 }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: '#FB923C', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      ● Needs Attention <span style={{ color: 'rgba(255,255,255,0.25)' }}>{pending.length}</span>
+                    </div>
+                    {pending.map(fu => <FuCard key={fu.id} fu={fu} />)}
+                  </div>
+                )}
+
+                {/* Drafted */}
+                {drafted.length > 0 && (
+                  <div style={{ marginBottom: 28 }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: '#60A5FA', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      ● Ready to Send <span style={{ color: 'rgba(255,255,255,0.25)' }}>{drafted.length}</span>
+                    </div>
+                    {drafted.map(fu => <FuCard key={fu.id} fu={fu} />)}
+                  </div>
+                )}
+
+                {/* Sent */}
+                {sent.length > 0 && (
+                  <div style={{ marginBottom: 28 }}>
+                    <div style={{ fontSize: 10, fontWeight: 600, color: '#34D399', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 }}>
+                      ● Sent <span style={{ color: 'rgba(255,255,255,0.25)' }}>{sent.length}</span>
+                    </div>
+                    {sent.map(fu => <FuCard key={fu.id} fu={fu} />)}
+                  </div>
+                )}
+
+                {followups.length === 0 && (
+                  <div style={{ ...C.card, textAlign: 'center', padding: 52 }}>
+                    <div style={{ fontSize: 36, marginBottom: 12 }}>✉</div>
+                    <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 8 }}>No follow-ups yet</div>
+                    <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.36)', maxWidth: 320, margin: '0 auto' }}>
+                      Follow-ups are auto-detected from your Applications tracker — applied 7+ days ago, interviews, and rejections will appear here automatically.
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })()}
 
           {/* ── GMAIL AGENT ── */}
           {tab === 'gmail' && (

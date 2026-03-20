@@ -14,7 +14,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('[JobAgent BG] Message received:', message.type)
   if (message.type === 'CALL_ANTHROPIC') {
-    const { apiKey, prompt } = message
+    const { apiKey, language } = message
+    const langInstr = language === 'FR' ? '\n\nWrite your entire response in French. Use formal French appropriate for professional job applications in Belgium.'
+                    : language === 'NL' ? '\n\nSchrijf je volledige antwoord in het Nederlands. Gebruik formeel Nederlands dat geschikt is voor professionele sollicitaties in België.'
+                    : ''
+    const prompt = message.prompt + langInstr
     console.log('[JobAgent BG] CALL_ANTHROPIC — key starts with:', apiKey ? apiKey.slice(0, 8) : '(empty)', '— ends with:', apiKey ? apiKey.slice(-4) : '(empty)')
     console.log('[JobAgent BG] Full key length:', apiKey ? apiKey.length : 0)
 
@@ -58,15 +62,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === 'PREPARE_APPLY') {
-    const { apiKey, job } = message
-    console.log('[JobAgent BG] PREPARE_APPLY — job:', job?.title, '/', job?.company)
+    const { apiKey, job, language } = message
+    console.log('[JobAgent BG] PREPARE_APPLY — job:', job?.title, '/', job?.company, '— language:', language || 'EN')
 
     ;(async () => {
       try {
+        const langInstr = language === 'FR' ? '\n\nWrite your entire response in French. Use formal French appropriate for professional job applications in Belgium.'
+                        : language === 'NL' ? '\n\nSchrijf je volledige antwoord in het Nederlands. Gebruik formeel Nederlands dat geschikt is voor professionele sollicitaties in België.'
+                        : ''
         const prompt = `Write application materials for Michael Van Gyseghem applying to "${job.title}" at "${job.company}". Profile: Strategic Sales & BD Leader, 8+ years B2B experience in SaaS/Fintech/Real Estate, based in Brussels, trilingual EN/FR/NL.
 
 Return ONLY valid JSON, no markdown:
-{"coverLetter":"Professional 3-paragraph cover letter under 200 words tailored to this role","formAnswers":{"whyThisRole":"2 sentence answer tailored to the role and company","describeExperience":"2 sentence answer using Michael's real experience","salaryExpectation":"€80,000–€110,000 depending on full package","noticePeriod":"Available immediately","motivation":"1 sentence answer"}}`
+{"coverLetter":"Professional 3-paragraph cover letter under 200 words tailored to this role","formAnswers":{"whyThisRole":"2 sentence answer tailored to the role and company","describeExperience":"2 sentence answer using Michael's real experience","salaryExpectation":"€80,000–€110,000 depending on full package","noticePeriod":"Available immediately","motivation":"1 sentence answer"}}` + langInstr
 
         const response = await fetch('https://api.anthropic.com/v1/messages', {
           method: 'POST',

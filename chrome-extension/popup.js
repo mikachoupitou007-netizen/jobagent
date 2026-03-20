@@ -27,6 +27,7 @@ const profileText = () =>
 // ── State ─────────────────────────────────────────────────────────────────────
 let apiKey = ''
 let currentJob = null
+let outputLanguage = 'EN'
 
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -127,7 +128,7 @@ function prepareAndApply() {
       return
     }
 
-    chrome.runtime.sendMessage({ type: 'PREPARE_APPLY', apiKey: key, job: currentJob }, (response) => {
+    chrome.runtime.sendMessage({ type: 'PREPARE_APPLY', apiKey: key, job: currentJob, language: outputLanguage }, (response) => {
       if (chrome.runtime.lastError || !response?.ok) {
         showResult(`<p class="err">Preparation failed: ${chrome.runtime.lastError?.message || response?.error}</p>`)
         setBtn('btn-prepare-apply', false, '⚡ Prepare &amp; Apply')
@@ -197,6 +198,24 @@ function fillForm() {
 }
 
 
+// ── Language toggle ───────────────────────────────────────────────────────────
+function renderLangToggle() {
+  const container = $('lang-toggle')
+  if (!container) return
+  container.innerHTML = ['EN', 'FR', 'NL'].map(lang => `
+    <button class="btn btn-xs ${lang === outputLanguage ? 'btn-primary' : 'btn-ghost'}" data-lang="${lang}" style="flex:1;padding:6px 0">${lang}</button>
+  `).join('')
+  container.querySelectorAll('button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      outputLanguage = btn.dataset.lang
+      chrome.storage.sync.set({ outputLanguage })
+      renderLangToggle()
+      console.log('[JobAgent popup] Output language set to:', outputLanguage)
+    })
+  })
+}
+
+
 // ── Analyse with AI ───────────────────────────────────────────────────────────
 function analyseJob() {
   if (!currentJob) return
@@ -216,7 +235,7 @@ function analyseJob() {
     const prompt = `You are an expert career coach. Analyse this job description for the candidate and return ONLY valid JSON, no markdown.\n\nCANDIDATE:\n${profileText()}\n\nJOB:\nTitle: ${currentJob.title}\nCompany: ${currentJob.company}\nDescription: ${currentJob.description}\n\nReturn exactly:\n{"matchScore":85,"matchedSkills":["skill1","skill2"],"gaps":["gap1"],"summary":"2-sentence personalised summary of fit using Michael's real experience"}`
 
     console.log('[JobAgent popup] Sending CALL_ANTHROPIC message — key starts with:', key.slice(0, 8))
-    chrome.runtime.sendMessage({ type: 'CALL_ANTHROPIC', apiKey: key, prompt }, function (response) {
+    chrome.runtime.sendMessage({ type: 'CALL_ANTHROPIC', apiKey: key, prompt, language: outputLanguage }, function (response) {
       console.log('[JobAgent popup] analyseJob response:', chrome.runtime.lastError || response)
       if (chrome.runtime.lastError) {
         showResult(`<p class="err">Background error: ${chrome.runtime.lastError.message}</p>`)
@@ -278,7 +297,7 @@ function generateCoverLetter() {
     const prompt = `You are an expert career consultant. Write a professional cover letter for ${MICHAEL.name} applying for the role below. Use his real experience. 3 paragraphs, under 250 words. Output only the letter body, no subject line.\n\nCANDIDATE:\n${profileText()}\n\nROLE:\nTitle: ${currentJob.title}\nCompany: ${currentJob.company}\nDescription: ${currentJob.description}`
 
     console.log('[JobAgent popup] Sending CALL_ANTHROPIC message — key starts with:', key.slice(0, 8))
-    chrome.runtime.sendMessage({ type: 'CALL_ANTHROPIC', apiKey: key, prompt }, function (response) {
+    chrome.runtime.sendMessage({ type: 'CALL_ANTHROPIC', apiKey: key, prompt, language: outputLanguage }, function (response) {
       console.log('[JobAgent popup] generateCoverLetter response:', chrome.runtime.lastError || response)
       if (chrome.runtime.lastError) {
         showResult(`<p class="err">Background error: ${chrome.runtime.lastError.message}</p>`)
@@ -422,10 +441,12 @@ function saveSettings() {
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
 
-  // Load API key from storage
-  chrome.storage.sync.get('apiKey', async ({ apiKey: stored }) => {
+  // Load API key + language from storage
+  chrome.storage.sync.get(['apiKey', 'outputLanguage'], async ({ apiKey: stored, outputLanguage: storedLang }) => {
     apiKey = stored || ''
-    console.log('API key loaded:', apiKey ? apiKey.slice(0, 8) + '…' : '(none)')
+    outputLanguage = storedLang || 'EN'
+    console.log('API key loaded:', apiKey ? apiKey.slice(0, 8) + '…' : '(none)', '— language:', outputLanguage)
+    renderLangToggle()
 
     if (!apiKey) {
       showScreen('setup')
@@ -462,7 +483,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('btn-log').addEventListener('click', () => logJob())
 
   // Nav buttons
-  $('btn-settings').addEventListener('click', () => { loadSettings(); showScreen('settings') })
+  $('btn-settings').addEventListener('click', () => { loadSettings(); renderLangToggle(); showScreen('settings') })
   $('btn-tracker').addEventListener('click', () => { loadTracker(); showScreen('tracker') })
   $('btn-back-settings').addEventListener('click', () => showScreen('main'))
   $('btn-back-tracker').addEventListener('click', () => showScreen('main'))
