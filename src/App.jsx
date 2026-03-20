@@ -1314,6 +1314,16 @@ Return ONLY valid JSON, no markdown:
               const isExpanded = fuExpanded[fu.id]
               const isDrafting = fuDrafting[fu.id]
               const isSending  = fuSending[fu.id]
+
+              // Local draft state — bound to inputs so keystrokes never re-render parent
+              const [localTo,      setLocalTo]      = React.useState(fu.recipientEmail || '')
+              const [localSubject, setLocalSubject] = React.useState(fu.draftedEmail?.subject || '')
+              const [localBody,    setLocalBody]    = React.useState(fu.draftedEmail?.body    || '')
+
+              // Sync local state when draftedEmail changes (e.g. after AI draft completes)
+              React.useEffect(() => { setLocalSubject(fu.draftedEmail?.subject || '') }, [fu.draftedEmail?.subject])
+              React.useEffect(() => { setLocalBody(fu.draftedEmail?.body    || '') }, [fu.draftedEmail?.body])
+              React.useEffect(() => { setLocalTo(fu.recipientEmail || '') },           [fu.recipientEmail])
               return (
                 <div style={{ ...C.card, marginBottom: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 }}>
@@ -1333,8 +1343,9 @@ Return ONLY valid JSON, no markdown:
                     <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: 14, marginBottom: 12 }}>
                       <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>To: Recruiter Email</div>
                       <input
-                        value={fu.recipientEmail || ''}
-                        onChange={e => updateFollowupDraft(fu.id, 'recipientEmail', e.target.value)}
+                        value={localTo}
+                        onChange={e => setLocalTo(e.target.value)}
+                        onBlur={e => updateFollowupDraft(fu.id, 'recipientEmail', e.target.value)}
                         placeholder="recruiter@company.com"
                         name={`recruiterEmail-${fu.id}`}
                         autoComplete="off"
@@ -1342,20 +1353,22 @@ Return ONLY valid JSON, no markdown:
                         autoCapitalize="off"
                         spellCheck={false}
                         data-form-type="other"
-                        style={{ ...C.inp, fontSize: 12, marginBottom: 10, borderColor: !fu.recipientEmail?.trim() ? 'rgba(248,113,113,0.5)' : undefined }}
+                        style={{ ...C.inp, fontSize: 12, marginBottom: 10, borderColor: !localTo.trim() ? 'rgba(248,113,113,0.5)' : undefined }}
                       />
                       <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Subject</div>
                       <input
-                        value={fu.draftedEmail.subject || ''}
-                        onChange={e => updateFollowupDraft(fu.id, 'subject', e.target.value)}
+                        value={localSubject}
+                        onChange={e => setLocalSubject(e.target.value)}
+                        onBlur={e => updateFollowupDraft(fu.id, 'subject', e.target.value)}
                         autoComplete="off"
                         data-form-type="other"
                         style={{ ...C.inp, fontSize: 12, marginBottom: 10 }}
                       />
                       <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Body</div>
                       <textarea
-                        value={fu.draftedEmail.body || ''}
-                        onChange={e => updateFollowupDraft(fu.id, 'body', e.target.value)}
+                        value={localBody}
+                        onChange={e => setLocalBody(e.target.value)}
+                        onBlur={e => updateFollowupDraft(fu.id, 'body', e.target.value)}
                         rows={8}
                         style={{ ...C.inp, fontSize: 12, resize: 'vertical', lineHeight: 1.6 }}
                       />

@@ -310,9 +310,14 @@ function detectEasyApply() {
   return { detected: buttonFound || modalOpen, buttonFound, modalOpen, buttonEl }
 }
 
+// ── Context-safe chrome wrappers — silently no-op if extension was reloaded ───
+function safeSet(obj)      { try { chrome.storage.local.set(obj) }         catch (e) { if (!e.message?.includes('Extension context')) console.warn('[JobAgent] safeSet error:', e.message) } }
+function safeRemove(key)   { try { chrome.storage.local.remove(key) }      catch (e) { if (!e.message?.includes('Extension context')) console.warn('[JobAgent] safeRemove error:', e.message) } }
+function safeGet(key, cb)  { try { chrome.storage.local.get(key, cb) }     catch (e) { if (!e.message?.includes('Extension context')) console.warn('[JobAgent] safeGet error:', e.message) } }
+
 function storeEasyApplyStatus() {
   const { detected, buttonFound, modalOpen } = detectEasyApply()
-  chrome.storage.local.set({ jobagent_easy_apply: { detected, buttonFound, modalOpen } })
+  safeSet({ jobagent_easy_apply: { detected, buttonFound, modalOpen } })
 }
 
 
@@ -343,14 +348,14 @@ function waitForLinkedIn() {
       observer.disconnect()
       clearTimeout(debounceTimer)
       console.log('[JobAgent] LinkedIn — extraction complete, reason:', reason)
-      chrome.storage.local.set({ jobagent_current_job: job })
+      safeSet({ jobagent_current_job: job })
       console.log('[JobAgent] LinkedIn — stored to jobagent_current_job, detected:', job.detected)
     } else if (Date.now() - startTime >= TIMEOUT_MS) {
       done = true
       observer.disconnect()
       clearTimeout(debounceTimer)
       if (isValidJob(job)) {
-        chrome.storage.local.set({ jobagent_current_job: job })
+        safeSet({ jobagent_current_job: job })
       } else {
         console.log('[JobAgent] LinkedIn — timeout but result invalid (search page?), not storing:', job.title, '/', job.company)
       }
@@ -358,11 +363,15 @@ function waitForLinkedIn() {
   }
 
   const observer = new MutationObserver(() => {
-    clearTimeout(debounceTimer)
-    debounceTimer = setTimeout(() => {
-      attemptExtraction('mutation debounce')
-      storeEasyApplyStatus()
-    }, DEBOUNCE_MS)
+    try {
+      clearTimeout(debounceTimer)
+      debounceTimer = setTimeout(() => {
+        attemptExtraction('mutation debounce')
+        storeEasyApplyStatus()
+      }, DEBOUNCE_MS)
+    } catch (e) {
+      if (!e.message?.includes('Extension context')) console.warn('[JobAgent] MutationObserver error:', e.message)
+    }
   })
   observer.observe(document.body, { childList: true, subtree: true })
 
@@ -397,7 +406,7 @@ if (host.includes('linkedin.com')) {
     lastUrl = newUrl
 
     // Clear stale data immediately so popup shows loading state
-    chrome.storage.local.remove('jobagent_current_job')
+    safeRemove('jobagent_current_job')
     clearTimeout(reextractTimer)
 
     // Wait 1500ms for React to start rendering, then retry up to 3 times with 1s gap
@@ -412,7 +421,7 @@ if (host.includes('linkedin.com')) {
         storeEasyApplyStatus()
         if (isValidJob(job)) {
           console.log('[JobAgent] LinkedIn re-extraction succeeded on attempt', attempt)
-          chrome.storage.local.set({ jobagent_current_job: job })
+          safeSet({ jobagent_current_job: job })
         } else if (attempt < maxAttempts) {
           console.log('[JobAgent] LinkedIn re-extraction attempt', attempt, '— invalid result (', job.title, '/', job.company, '), retrying…')
           setTimeout(tryExtract, 1000)
@@ -432,7 +441,11 @@ if (host.includes('linkedin.com')) {
 
   // Poll href every 1000ms as final fallback (catches navigations that bypass history API)
   setInterval(() => {
-    if (window.location.href !== lastUrl) onNavigation()
+    try {
+      if (window.location.href !== lastUrl) onNavigation()
+    } catch (e) {
+      if (!e.message?.includes('Extension context')) console.warn('[JobAgent] setInterval error:', e.message)
+    }
   }, 1000)
 }
 
@@ -440,7 +453,7 @@ if (host.includes('linkedin.com')) {
 // ── Message listener — serves stored result for reliability ───────────────────
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'GET_JOB_DATA') {
-    chrome.storage.local.get('jobagent_current_job', ({ jobagent_current_job }) => {
+    safeGet('jobagent_current_job', ({ jobagent_current_job }) => {
       if (jobagent_current_job?.detected) {
         console.log('[JobAgent] GET_JOB_DATA — returning stored result')
         sendResponse(jobagent_current_job)
@@ -573,5 +586,5 @@ if (host.includes('linkedin.com')) {
 } else {
   // Other sites: extract immediately and cache
   const job = extract()
-  if (job.detected) chrome.storage.local.set({ jobagent_current_job: job })
+  if (job.detected) safeSet({ jobagent_current_job: job })
 }
