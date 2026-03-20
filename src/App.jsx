@@ -123,6 +123,26 @@ const INIT_APPS = [
   { id: 3, company: 'Colliers International', role: 'Business Development Manager', date: '2026-03-08', status: 'Applied', notes: 'Referred by contact', url: '' },
 ]
 
+function extractJSON(text) {
+  const cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim()
+  let start = -1
+  let startChar = ''
+  for (let i = 0; i < cleaned.length; i++) {
+    if (cleaned[i] === '{' || cleaned[i] === '[') {
+      start = i; startChar = cleaned[i]; break
+    }
+  }
+  if (start === -1) return null
+  const endChar = startChar === '{' ? '}' : ']'
+  let depth = 0
+  for (let i = start; i < cleaned.length; i++) {
+    if (cleaned[i] === startChar) depth++
+    if (cleaned[i] === endChar)   depth--
+    if (depth === 0) return cleaned.substring(start, i + 1)
+  }
+  return null
+}
+
 const callClaude = async (prompt) => {
   const apiKey = localStorage.getItem('jobagent_api_key') || import.meta.env.VITE_ANTHROPIC_API_KEY
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -239,46 +259,6 @@ export default function App() {
     if (lang === 'FR') return '\n\nWrite all text values in French. Use formal French appropriate for professional job applications in Belgium.' + keyWarning
     if (lang === 'NL') return '\n\nSchrijf alle tekstwaarden in het Nederlands. Gebruik formeel Nederlands dat geschikt is voor professionele sollicitaties in België.' + keyWarning
     return ''
-  }
-
-  // Robustly extract JSON using bracket-counting — handles apostrophes, accents, nested objects
-  const extractJSON = (raw, preferArray = false) => {
-    const cleaned = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim()
-    // Try direct parse first (fastest path)
-    try { return JSON.parse(cleaned) } catch {}
-
-    const bracketExtract = (str, open, close) => {
-      const start = str.indexOf(open)
-      if (start === -1) return null
-      let depth = 0
-      let inString = false
-      let escape = false
-      for (let i = start; i < str.length; i++) {
-        const ch = str[i]
-        if (escape) { escape = false; continue }
-        if (ch === '\\' && inString) { escape = true; continue }
-        if (ch === '"') { inString = !inString; continue }
-        if (inString) continue
-        if (ch === open)  depth++
-        if (ch === close) { depth--; if (depth === 0) return str.slice(start, i + 1) }
-      }
-      return null
-    }
-
-    // Prefer array if caller expects one and [ appears before {
-    if (preferArray) {
-      const arrStart = cleaned.indexOf('['), objStart = cleaned.indexOf('{')
-      if (arrStart !== -1 && (objStart === -1 || arrStart < objStart)) {
-        const sub = bracketExtract(cleaned, '[', ']')
-        if (sub) try { return JSON.parse(sub) } catch {}
-      }
-    }
-    const objSub = bracketExtract(cleaned, '{', '}')
-    if (objSub) try { return JSON.parse(objSub) } catch {}
-    const arrSub = bracketExtract(cleaned, '[', ']')
-    if (arrSub) try { return JSON.parse(arrSub) } catch {}
-
-    throw new Error('No valid JSON found in response: ' + raw.slice(0, 120))
   }
 
   const setLanguage = (lang) => {
@@ -490,8 +470,10 @@ export default function App() {
   const delApp    = (id)    => setApps(p => p.filter(a => a.id !== id))
 
   const parseIntelJobs = (raw) => {
-    try { const r = extractJSON(raw, true); return Array.isArray(r) ? r : [r] } catch {}
-    throw new Error('No parseable job objects found in response: ' + raw.slice(0, 120))
+    const jsonStr = extractJSON(raw)
+    if (!jsonStr) throw new Error('No parseable job objects found in response: ' + raw.slice(0, 120))
+    const r = JSON.parse(jsonStr)
+    return Array.isArray(r) ? r : [r]
   }
 
   const scanIntelligence = async () => {
@@ -587,7 +569,7 @@ Return ONLY valid JSON, no markdown:
 {"coverLetter":"3 concise paragraphs under 200 words","formAnswers":{"whyThisRole":"2 sentence answer tailored to the role","describeExperience":"2 sentence answer using real experience","salaryExpectation":"€80,000–€110,000 depending on full package","availability":"Available immediately","whyThisCompany":"1 sentence answer"}}` + getLanguageInstruction()
       const text = await callClaude(prompt)
       try {
-        const parsed = extractJSON(text)
+        const parsed = JSON.parse(extractJSON(text))
         setAutoQueue(prev => prev.map(j => j.id === jobId
           ? { ...j, coverLetter: parsed.coverLetter || '', formAnswers: parsed.formAnswers || {}, status: 'prepared' }
           : j))
@@ -610,7 +592,8 @@ Return ONLY valid JSON, no markdown:
       const prompt = `You are an expert career coach. Analyse this job description for the candidate and return ONLY valid JSON, no markdown, no code fences, no preamble.\n\nCANDIDATE:\n${prof}\n\nJOB DESCRIPTION:\n${jd}\n\nReturn exactly:\n{"jobTitle":"title","company":"company or Unknown","matchScore":85,"matchedSkills":["skill1","skill2"],"gaps":["gap1"],"tailoredSummary":"3-sentence first-person summary tailored to this role using Michael's actual experience","coverLetter":"Professional 3-paragraph cover letter for this exact role. Sign as Michael Van Gyseghem.","keyTalkingPoints":["point1","point2","point3"]}` + getLanguageInstruction()
       const raw = await callClaude(prompt)
       try {
-        setAnalysis(extractJSON(raw))
+        const jsonStr = extractJSON(raw)
+        setAnalysis(JSON.parse(jsonStr))
       } catch (parseErr) {
         console.error('[JobAgent] analyseJD parse error — raw response:', raw.slice(0, 300))
         setAErr(`Parse error — unexpected response: "${raw.slice(0, 200)}"`)
@@ -627,7 +610,8 @@ Return ONLY valid JSON, no markdown:
       const prompt = `You are an expert interview coach. Generate 6 targeted interview questions with STAR-format answers using this candidate's specific experience. Return ONLY valid JSON, no markdown.\n\nCANDIDATE: ${MICHAEL.name}\nEXPERIENCE: ${exp}\nSKILLS: ${MICHAEL.skills.join(', ')}\n\nJOB DESCRIPTION:\n${iJd}\n\nReturn exactly:\n{"questions":[{"question":"?","type":"Behavioral","difficulty":"Medium","suggestedAnswer":"STAR-format answer using Michael's real experience (3-4 sentences)"}]}` + getLanguageInstruction()
       const raw = await callClaude(prompt)
       try {
-        setQs(extractJSON(raw))
+        const jsonStr = extractJSON(raw)
+        setQs(JSON.parse(jsonStr))
       } catch (parseErr) {
         console.error('[JobAgent] genQuestions parse error — raw response:', raw.slice(0, 300))
         setIErr(`Parse error — unexpected response: "${raw.slice(0, 200)}"`)
@@ -726,7 +710,7 @@ Return ONLY valid JSON, no markdown:
     try {
       const raw = await callClaude(prompts[fu.type])
       try {
-        const parsed = extractJSON(raw)
+        const parsed = JSON.parse(extractJSON(raw))
         setFollowups(p => p.map(f => f.id === fuId ? { ...f, draftedEmail: parsed, status: 'drafted' } : f))
       } catch (parseErr) {
         console.error('[JobAgent] draftFollowup parse error — raw:', raw.slice(0, 300))
