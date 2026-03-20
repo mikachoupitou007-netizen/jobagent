@@ -124,11 +124,12 @@ const INIT_APPS = [
 ]
 
 const callClaude = async (prompt) => {
+  const apiKey = localStorage.getItem('jobagent_api_key') || import.meta.env.VITE_ANTHROPIC_API_KEY
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": import.meta.env.VITE_ANTHROPIC_API_KEY,
+      "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
       "anthropic-dangerous-direct-browser-access": "true",
     },
@@ -215,6 +216,7 @@ export default function App() {
   const [wizardStep, setWizardStep]       = useState(1)
   const [wInput, setWInput]               = useState({ title: '', industry: '', location: '', keyword: '' })
   const [toast, setToast]                 = useState(null)
+  const [apiKeyMissing]                   = useState(() => !import.meta.env.VITE_ANTHROPIC_API_KEY)
   const [intelJobs, setIntelJobs]         = useState(() => { try { const s = localStorage.getItem('jobagent_intelligence'); return s ? JSON.parse(s).jobs : [] } catch { return [] } })
   const [intelScannedAt, setIntelScannedAt] = useState(() => { try { const s = localStorage.getItem('jobagent_intelligence'); return s ? JSON.parse(s).scannedAt : null } catch { return null } })
   const [intelLoading, setIntelLoading]   = useState(false)
@@ -474,7 +476,7 @@ Return ONLY a JSON array, no markdown, no text before or after:
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': import.meta.env.VITE_ANTHROPIC_API_KEY,
+        'x-api-key': localStorage.getItem('jobagent_api_key') || import.meta.env.VITE_ANTHROPIC_API_KEY,
         'anthropic-version': '2023-06-01',
         'anthropic-dangerous-direct-browser-access': 'true',
       },
@@ -978,6 +980,13 @@ Return ONLY valid JSON, no markdown:
 
   return (
     <div style={{ minHeight: '100vh', background: '#07070F', color: '#E8E8F4', fontFamily: "'Sora', system-ui, sans-serif", display: 'flex', flexDirection: 'column' }}>
+
+      {/* API KEY MISSING BANNER */}
+      {apiKeyMissing && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, background: 'rgba(248,113,113,0.15)', borderBottom: '1px solid rgba(248,113,113,0.4)', color: '#F87171', padding: '10px 20px', fontSize: 12, fontWeight: 600, textAlign: 'center', zIndex: 10000 }}>
+          ⚠ API key missing — set VITE_ANTHROPIC_API_KEY in Vercel environment variables
+        </div>
+      )}
 
       {/* TOAST */}
       {toast && (
@@ -1725,6 +1734,37 @@ Return ONLY valid JSON, no markdown:
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button onClick={() => setDraft({ ...config })} style={{ ...C.ghost, fontSize: 12 }}>Reset</button>
                     <button onClick={() => saveConfig(draft)} style={{ ...C.btn, fontSize: 12 }}>Save Changes</button>
+                  </div>
+                </div>
+
+                {/* API Configuration */}
+                <div style={{ ...C.card, marginBottom: 14 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 6, ...gT, display: 'inline-block' }}>API Configuration</div>
+                  <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.3)', marginBottom: 16 }}>Your key is stored locally in your browser and is only ever sent directly to Anthropic — never to any other server.</p>
+                  <div style={sec}>
+                    <span style={sLabel}>Anthropic API Key</span>
+                    <input
+                      type="password"
+                      defaultValue={localStorage.getItem('jobagent_api_key') || ''}
+                      onChange={e => {
+                        const v = e.target.value.trim()
+                        if (v) localStorage.setItem('jobagent_api_key', v)
+                        else localStorage.removeItem('jobagent_api_key')
+                      }}
+                      placeholder="sk-ant-api03-… (overrides Vercel env var)"
+                      autoComplete="off"
+                      data-form-type="other"
+                      style={{ ...C.inp, fontSize: 12, fontFamily: 'monospace' }}
+                    />
+                    {localStorage.getItem('jobagent_api_key') && (
+                      <div style={{ fontSize: 10, color: '#34D399', marginTop: 6 }}>✓ Custom key active — ends in …{localStorage.getItem('jobagent_api_key').slice(-4)}</div>
+                    )}
+                    {!localStorage.getItem('jobagent_api_key') && import.meta.env.VITE_ANTHROPIC_API_KEY && (
+                      <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 6 }}>Using Vercel environment variable</div>
+                    )}
+                    {!localStorage.getItem('jobagent_api_key') && !import.meta.env.VITE_ANTHROPIC_API_KEY && (
+                      <div style={{ fontSize: 10, color: '#F87171', marginTop: 6 }}>⚠ No key found — enter one above</div>
+                    )}
                   </div>
                 </div>
 
