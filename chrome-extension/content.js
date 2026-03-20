@@ -223,6 +223,33 @@ function extract() {
     )
   }
 
+  // ── Contact email extraction ──────────────────────────────────────
+  const emailRegex = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g
+  const blockedDomains = ['linkedin.com', 'sentry.io', 'example.com', 'facebook.com', 'twitter.com', 'instagram.com', 'google.com', 'microsoft.com', 'apple.com']
+  const seenEmails = new Set()
+  const contactEmails = []
+
+  // Scan mailto: hrefs
+  document.querySelectorAll('a[href^="mailto:"]').forEach(a => {
+    const addr = a.href.replace('mailto:', '').split('?')[0].trim().toLowerCase()
+    if (addr && !seenEmails.has(addr) && !blockedDomains.some(d => addr.includes(d))) {
+      seenEmails.add(addr); contactEmails.push(addr)
+    }
+  })
+
+  // Scan all text content on page
+  const pageText = document.body.innerText || ''
+  const textMatches = pageText.match(emailRegex) || []
+  for (const addr of textMatches) {
+    const lower = addr.toLowerCase()
+    if (!seenEmails.has(lower) && !blockedDomains.some(d => lower.includes(d))) {
+      seenEmails.add(lower); contactEmails.push(lower)
+      if (contactEmails.length >= 3) break
+    }
+  }
+
+  console.log('[JobAgent] Contact emails found:', contactEmails)
+
   const result = {
     title,
     company,
@@ -230,6 +257,7 @@ function extract() {
     url: cleanUrl(window.location.href),
     site,
     detected: !!(title || company) || description.length > 0,
+    contactEmails,
   }
 
   console.log('[JobAgent] extract() result:', {

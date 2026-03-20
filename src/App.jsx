@@ -306,15 +306,18 @@ export default function App() {
       apps.forEach(app => {
         const hasType = (type) => updated.some(f => f.appId === app.id && f.type === type)
         if (app.status === 'Applied' && app.date <= sevenDaysAgo && !hasType('applied-followup')) {
-          updated.push({ id: Date.now() + Math.random(), appId: app.id, company: app.company, role: app.role, type: 'applied-followup', status: 'pending', dueDate: todayStr, draftedEmail: null, createdAt: todayStr })
+          const emailMatch = (app.notes || '').match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/)
+          updated.push({ id: Date.now() + Math.random(), appId: app.id, company: app.company, role: app.role, type: 'applied-followup', status: 'pending', dueDate: todayStr, draftedEmail: null, createdAt: todayStr, recipientEmail: emailMatch ? emailMatch[0] : '' })
           changed = true
         }
         if (app.status === 'Interview' && !hasType('interview-thankyou')) {
-          updated.push({ id: Date.now() + Math.random(), appId: app.id, company: app.company, role: app.role, type: 'interview-thankyou', status: 'pending', dueDate: tomorrowStr, draftedEmail: null, createdAt: todayStr })
+          const emailMatch = (app.notes || '').match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/)
+          updated.push({ id: Date.now() + Math.random(), appId: app.id, company: app.company, role: app.role, type: 'interview-thankyou', status: 'pending', dueDate: tomorrowStr, draftedEmail: null, createdAt: todayStr, recipientEmail: emailMatch ? emailMatch[0] : '' })
           changed = true
         }
         if (app.status === 'Rejected' && !hasType('rejection-response')) {
-          updated.push({ id: Date.now() + Math.random(), appId: app.id, company: app.company, role: app.role, type: 'rejection-response', status: 'pending', dueDate: todayStr, draftedEmail: null, createdAt: todayStr })
+          const emailMatch = (app.notes || '').match(/[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/)
+          updated.push({ id: Date.now() + Math.random(), appId: app.id, company: app.company, role: app.role, type: 'rejection-response', status: 'pending', dueDate: todayStr, draftedEmail: null, createdAt: todayStr, recipientEmail: emailMatch ? emailMatch[0] : '' })
           changed = true
         }
       })
@@ -653,10 +656,12 @@ Return ONLY valid JSON, no markdown:
     const fu = followups.find(f => f.id === fuId)
     if (!fu?.draftedEmail) return
     if (!gmailToken) { showToast('Connect Gmail first in the Gmail Agent tab', 3000); return }
+    if (!fu.recipientEmail?.trim()) { showToast('Please enter the recruiter email address', 3000); return }
     setFuSending(p => ({ ...p, [fuId]: true }))
     try {
-      const to = 'michael.vangyseghem@gmail.com'
-      const emailLines = [`To: ${to}`, `Subject: ${fu.draftedEmail.subject}`, 'Content-Type: text/plain; charset=utf-8', '', fu.draftedEmail.body].join('\r\n')
+      const to = fu.recipientEmail.trim()
+      const cc = 'michael.vangyseghem@gmail.com'
+      const emailLines = [`To: ${to}`, `Cc: ${cc}`, `Subject: ${fu.draftedEmail.subject}`, 'Content-Type: text/plain; charset=utf-8', '', fu.draftedEmail.body].join('\r\n')
       const encoded = btoa(unescape(encodeURIComponent(emailLines))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
       const res = await fetch('https://www.googleapis.com/gmail/v1/users/me/messages/send', {
         method: 'POST',
@@ -1290,6 +1295,13 @@ Return ONLY valid JSON, no markdown:
                   {/* Expanded email preview */}
                   {isExpanded && fu.draftedEmail && (
                     <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: 14, marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>To: Recruiter Email</div>
+                      <input
+                        value={fu.recipientEmail || ''}
+                        onChange={e => setFollowups(p => p.map(f => f.id === fu.id ? { ...f, recipientEmail: e.target.value } : f))}
+                        placeholder="recruiter@company.com"
+                        style={{ ...C.inp, fontSize: 12, marginBottom: 10, borderColor: !fu.recipientEmail?.trim() ? 'rgba(248,113,113,0.5)' : undefined }}
+                      />
                       <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Subject</div>
                       <input
                         defaultValue={fu.draftedEmail.subject}
