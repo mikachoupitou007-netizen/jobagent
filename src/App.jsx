@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback, useMemo, memo } from "react"
 
 const cfgCookieName = (id) => `jobagent_config_${id}`
 
@@ -1316,14 +1316,14 @@ Return ONLY valid JSON, no markdown:
               const isSending  = fuSending[fu.id]
 
               // Local draft state — bound to inputs so keystrokes never re-render parent
-              const [localTo,      setLocalTo]      = React.useState(fu.recipientEmail || '')
-              const [localSubject, setLocalSubject] = React.useState(fu.draftedEmail?.subject || '')
-              const [localBody,    setLocalBody]    = React.useState(fu.draftedEmail?.body    || '')
+              const [localTo,      setLocalTo]      = useState(fu.recipientEmail || '')
+              const [localSubject, setLocalSubject] = useState(fu.draftedEmail?.subject || '')
+              const [localBody,    setLocalBody]    = useState(fu.draftedEmail?.body    || '')
 
               // Sync local state when draftedEmail changes (e.g. after AI draft completes)
-              React.useEffect(() => { setLocalSubject(fu.draftedEmail?.subject || '') }, [fu.draftedEmail?.subject])
-              React.useEffect(() => { setLocalBody(fu.draftedEmail?.body    || '') }, [fu.draftedEmail?.body])
-              React.useEffect(() => { setLocalTo(fu.recipientEmail || '') },           [fu.recipientEmail])
+              useEffect(() => { setLocalSubject(fu.draftedEmail?.subject || '') }, [fu.draftedEmail?.subject])
+              useEffect(() => { setLocalBody(fu.draftedEmail?.body    || '') }, [fu.draftedEmail?.body])
+              useEffect(() => { setLocalTo(fu.recipientEmail || '') },           [fu.recipientEmail])
               return (
                 <div style={{ ...C.card, marginBottom: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 }}>
