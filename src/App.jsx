@@ -143,7 +143,7 @@ function extractJSON(text) {
   return null
 }
 
-const callClaude = async (prompt) => {
+const callClaude = async (prompt, maxTokens = 1500) => {
   const apiKey = localStorage.getItem('jobagent_api_key') || import.meta.env.VITE_ANTHROPIC_API_KEY
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -155,7 +155,7 @@ const callClaude = async (prompt) => {
     },
     body: JSON.stringify({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 1500,
+      max_tokens: maxTokens,
       messages: [{ role: "user", content: prompt }],
     }),
   })
@@ -587,36 +587,53 @@ Return ONLY valid JSON, no markdown:
   const analyseJD = async () => {
     if (!jd.trim()) return
     setAnalysing(true); setAnalysis(null); setAErr('')
-    try {
-      const prof = `Name:${MICHAEL.name}\nTitle:${MICHAEL.title}\nSummary:${MICHAEL.summary}\nSkills:${MICHAEL.skills.join(', ')}\nExperience:${MICHAEL.experience.map(e => `${e.role} at ${e.company} (${e.period})`).join(' | ')}\nLanguages:${MICHAEL.languages.map(l => `${l.l} ${l.lv}`).join(', ')}`
-      const prompt = `You are an expert career coach. Analyse this job description for the candidate and return ONLY valid JSON, no markdown, no code fences, no preamble.\n\nCANDIDATE:\n${prof}\n\nJOB DESCRIPTION:\n${jd}\n\nReturn exactly:\n{"jobTitle":"title","company":"company or Unknown","matchScore":85,"matchedSkills":["skill1","skill2"],"gaps":["gap1"],"tailoredSummary":"3-sentence first-person summary tailored to this role using Michael's actual experience","coverLetter":"Professional 3-paragraph cover letter for this exact role. Sign as Michael Van Gyseghem.","keyTalkingPoints":["point1","point2","point3"]}` + getLanguageInstruction()
-      const raw = await callClaude(prompt)
+    const prof = `Name:${MICHAEL.name}\nTitle:${MICHAEL.title}\nSummary:${MICHAEL.summary}\nSkills:${MICHAEL.skills.join(', ')}\nExperience:${MICHAEL.experience.map(e => `${e.role} at ${e.company} (${e.period})`).join(' | ')}\nLanguages:${MICHAEL.languages.map(l => `${l.l} ${l.lv}`).join(', ')}`
+    const prompt = `You are an expert career coach. Analyse this job description for the candidate and return ONLY valid JSON, no markdown, no code fences, no preamble.\n\nCANDIDATE:\n${prof}\n\nJOB DESCRIPTION:\n${jd}\n\nReturn exactly:\n{"jobTitle":"title","company":"company or Unknown","matchScore":85,"matchedSkills":["skill1","skill2"],"gaps":["gap1"],"tailoredSummary":"3-sentence first-person summary tailored to this role using Michael's actual experience","coverLetter":"Professional 3-paragraph cover letter for this exact role. Sign as Michael Van Gyseghem.","keyTalkingPoints":["point1","point2","point3"]}` + getLanguageInstruction()
+    const MAX_RETRIES = 2
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        setAErr('Retrying…')
+        await new Promise(r => setTimeout(r, 1000))
+      }
       try {
+        const raw = await callClaude(prompt, 2000)
         const jsonStr = extractJSON(raw)
         setAnalysis(JSON.parse(jsonStr))
-      } catch (parseErr) {
-        console.error('[JobAgent] analyseJD parse error — raw response:', raw.slice(0, 300))
-        setAErr(`Parse error — unexpected response: "${raw.slice(0, 200)}"`)
+        setAErr('')
+        setAnalysing(false)
+        return
+      } catch (e) {
+        console.error(`[JobAgent] analyseJD attempt ${attempt + 1} failed:`, e.message)
+        if (attempt === MAX_RETRIES) setAErr(`Analysis failed — ${e.message}`)
       }
-    } catch (e) { setAErr('Analysis failed — ' + e.message) }
+    }
     setAnalysing(false)
   }
 
   const genQuestions = async () => {
     if (!iJd.trim()) return
     setGenerating(true); setQs(null); setIErr('')
-    try {
-      const exp = MICHAEL.experience.map(e => `${e.role} at ${e.company}: ${e.bullets[0]}`).join(' | ')
-      const prompt = `You are an expert interview coach. Generate 6 targeted interview questions with STAR-format answers using this candidate's specific experience. Return ONLY valid JSON, no markdown.\n\nCANDIDATE: ${MICHAEL.name}\nEXPERIENCE: ${exp}\nSKILLS: ${MICHAEL.skills.join(', ')}\n\nJOB DESCRIPTION:\n${iJd}\n\nReturn exactly:\n{"questions":[{"question":"?","type":"Behavioral","difficulty":"Medium","suggestedAnswer":"STAR-format answer using Michael's real experience (3-4 sentences)"}]}` + getLanguageInstruction()
-      const raw = await callClaude(prompt)
+    const questionCount = (outputLanguage === 'FR' || outputLanguage === 'NL') ? 4 : 6
+    const exp = MICHAEL.experience.map(e => `${e.role} at ${e.company}: ${e.bullets[0]}`).join(' | ')
+    const prompt = `You are an expert interview coach. Generate ${questionCount} targeted interview questions with STAR-format answers using this candidate's specific experience. Return ONLY valid JSON, no markdown.\n\nCANDIDATE: ${MICHAEL.name}\nEXPERIENCE: ${exp}\nSKILLS: ${MICHAEL.skills.join(', ')}\n\nJOB DESCRIPTION:\n${iJd}\n\nReturn exactly:\n{"questions":[{"question":"?","type":"Behavioral","difficulty":"Medium","suggestedAnswer":"STAR-format answer using Michael's real experience (3-4 sentences)"}]}` + getLanguageInstruction()
+    const MAX_RETRIES = 2
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) {
+        setIErr('Retrying…')
+        await new Promise(r => setTimeout(r, 1000))
+      }
       try {
+        const raw = await callClaude(prompt, 2000)
         const jsonStr = extractJSON(raw)
         setQs(JSON.parse(jsonStr))
-      } catch (parseErr) {
-        console.error('[JobAgent] genQuestions parse error — raw response:', raw.slice(0, 300))
-        setIErr(`Parse error — unexpected response: "${raw.slice(0, 200)}"`)
+        setIErr('')
+        setGenerating(false)
+        return
+      } catch (e) {
+        console.error(`[JobAgent] genQuestions attempt ${attempt + 1} failed:`, e.message)
+        if (attempt === MAX_RETRIES) setIErr(`Generation failed — ${e.message}`)
       }
-    } catch (e) { setIErr('Generation failed — ' + e.message) }
+    }
     setGenerating(false)
   }
 
@@ -707,16 +724,20 @@ Return ONLY valid JSON, no markdown:
       'interview-thankyou': `Write a warm, professional thank-you email from Michael Van Gyseghem to ${fu.company} after interviewing for the ${fu.role} position. Thank them for their time, reiterate his strong interest and fit, and mention looking forward to next steps. Keep it under 150 words. Return ONLY valid JSON: {"subject":"Thank you — ${fu.role} interview","body":"email body here"}` + langInstr,
       'rejection-response': `Write a gracious, professional response from Michael Van Gyseghem to ${fu.company} after being rejected for the ${fu.role} role. Thank them for their time, express appreciation for the opportunity, and politely ask to be considered for future suitable roles. Keep it brief and positive. Return ONLY valid JSON: {"subject":"Re: ${fu.role} application","body":"email body here"}` + langInstr,
     }
-    try {
-      const raw = await callClaude(prompts[fu.type])
+    const MAX_RETRIES = 2
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 1000))
       try {
+        const raw = await callClaude(prompts[fu.type], 2000)
         const parsed = JSON.parse(extractJSON(raw))
         setFollowups(p => p.map(f => f.id === fuId ? { ...f, draftedEmail: parsed, status: 'drafted' } : f))
-      } catch (parseErr) {
-        console.error('[JobAgent] draftFollowup parse error — raw:', raw.slice(0, 300))
-        showToast(`Parse error: "${raw.slice(0, 150)}"`, 4000)
+        setFuDrafting(p => ({ ...p, [fuId]: false }))
+        return
+      } catch (e) {
+        console.error(`[JobAgent] draftFollowup attempt ${attempt + 1} failed:`, e.message)
+        if (attempt === MAX_RETRIES) showToast(`Draft failed after ${MAX_RETRIES + 1} attempts: ${e.message}`, 4000)
       }
-    } catch (e) { showToast('Draft failed: ' + e.message, 3000) }
+    }
     setFuDrafting(p => ({ ...p, [fuId]: false }))
   }
 
