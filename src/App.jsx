@@ -658,6 +658,14 @@ Return ONLY valid JSON, no markdown:
     setGmailLoading(false)
   }
 
+  const updateFollowupDraft = (id, field, value) => {
+    setFollowups(p => p.map(f => {
+      if (f.id !== id) return f
+      if (field === 'recipientEmail') return { ...f, recipientEmail: value }
+      return { ...f, draftedEmail: { ...f.draftedEmail, [field]: value } }
+    }))
+  }
+
   const draftFollowup = async (fuId) => {
     const fu = followups.find(f => f.id === fuId)
     if (!fu) return
@@ -1326,20 +1334,28 @@ Return ONLY valid JSON, no markdown:
                       <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>To: Recruiter Email</div>
                       <input
                         value={fu.recipientEmail || ''}
-                        onChange={e => setFollowups(p => p.map(f => f.id === fu.id ? { ...f, recipientEmail: e.target.value } : f))}
+                        onChange={e => updateFollowupDraft(fu.id, 'recipientEmail', e.target.value)}
                         placeholder="recruiter@company.com"
+                        name={`recruiterEmail-${fu.id}`}
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
+                        data-form-type="other"
                         style={{ ...C.inp, fontSize: 12, marginBottom: 10, borderColor: !fu.recipientEmail?.trim() ? 'rgba(248,113,113,0.5)' : undefined }}
                       />
                       <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Subject</div>
                       <input
-                        defaultValue={fu.draftedEmail.subject}
-                        onChange={e => setFollowups(p => p.map(f => f.id === fu.id ? { ...f, draftedEmail: { ...f.draftedEmail, subject: e.target.value } } : f))}
+                        value={fu.draftedEmail.subject || ''}
+                        onChange={e => updateFollowupDraft(fu.id, 'subject', e.target.value)}
+                        autoComplete="off"
+                        data-form-type="other"
                         style={{ ...C.inp, fontSize: 12, marginBottom: 10 }}
                       />
                       <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Body</div>
                       <textarea
-                        defaultValue={fu.draftedEmail.body}
-                        onChange={e => setFollowups(p => p.map(f => f.id === fu.id ? { ...f, draftedEmail: { ...f.draftedEmail, body: e.target.value } } : f))}
+                        value={fu.draftedEmail.body || ''}
+                        onChange={e => updateFollowupDraft(fu.id, 'body', e.target.value)}
                         rows={8}
                         style={{ ...C.inp, fontSize: 12, resize: 'vertical', lineHeight: 1.6 }}
                       />
