@@ -261,6 +261,27 @@ export default function App() {
     return () => clearTimeout(t)
   }, [])
 
+  // Restore Gmail token from localStorage if still fresh (<55 min)
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('jobagent_gmail_token')
+      if (stored) {
+        const { token, email, timestamp } = JSON.parse(stored)
+        const ageMin = (Date.now() - timestamp) / 60000
+        console.log('[JobAgent] Stored Gmail token found — age:', Math.round(ageMin), 'min')
+        if (ageMin < 55) {
+          setGmailToken(token)
+          if (email) setGmailUser(email)
+        } else {
+          console.log('[JobAgent] Gmail token expired — clearing')
+          localStorage.removeItem('jobagent_gmail_token')
+        }
+      } else {
+        console.log('[JobAgent] No stored Gmail token found')
+      }
+    } catch { localStorage.removeItem('jobagent_gmail_token') }
+  }, [])
+
   // BUG 2 — persist tracker to localStorage whenever it changes
   useEffect(() => {
     localStorage.setItem('jobagent_tracker', JSON.stringify(apps))
@@ -358,6 +379,7 @@ export default function App() {
   const signOut = () => {
     setUser(null)
     localStorage.removeItem('jobagent_user')
+    localStorage.removeItem('jobagent_gmail_token')
     setGmailToken(null); setGmailUser(null); setGmailEmails([])
   }
 
@@ -565,11 +587,14 @@ Return ONLY valid JSON, no markdown:
       callback: async (tokenResponse) => {
         if (tokenResponse.error) { setGmailErr('Auth failed: ' + tokenResponse.error); return }
         setGmailToken(tokenResponse.access_token)
+        let emailAddr = null
         try {
           const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', { headers: { Authorization: 'Bearer ' + tokenResponse.access_token } })
           const u = await r.json()
-          setGmailUser(u.email)
+          emailAddr = u.email
+          setGmailUser(emailAddr)
         } catch (e) {}
+        localStorage.setItem('jobagent_gmail_token', JSON.stringify({ token: tokenResponse.access_token, email: emailAddr, timestamp: Date.now() }))
         scanInbox(tokenResponse.access_token)
       },
     })
