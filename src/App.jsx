@@ -160,8 +160,12 @@ const callClaude = async (prompt, maxTokens = 1500) => {
     }),
   })
   const d = await res.json()
+  if (!res.ok) {
+    const msg = d?.error?.message || JSON.stringify(d)
+    throw new Error(`HTTP ${res.status}: ${msg}`)
+  }
   const t = d.content?.[0]?.text
-  if (!t) throw new Error("Empty response")
+  if (!t) throw new Error(`Empty response (stop_reason: ${d.stop_reason}, usage: ${JSON.stringify(d.usage)})`)
   return t
 }
 
@@ -183,6 +187,7 @@ const NAV = [
   { id: 'interview',     label: 'Interview Prep', icon: '◇' },
   { id: 'profile',       label: 'My Profile',     icon: '◍' },
   { id: 'gmail',         label: 'Gmail Agent',    icon: '✉' },
+  { id: 'negotiation',   label: 'Salary Coach',   icon: '💰' },
   { id: 'settings',      label: 'Settings',       icon: '⚙' },
 ]
 
@@ -252,6 +257,8 @@ export default function App() {
   const [fuSending, setFuSending]         = useState({})
   const [fuExpanded, setFuExpanded]       = useState({})
   const [outputLanguage, setOutputLanguage] = useState(() => localStorage.getItem('jobagent_output_language') || 'EN')
+  const [salaryNegotiations, setSalaryNegotiations] = useState(() => { try { const s = localStorage.getItem('jobagent_salary_negotiations'); return s ? JSON.parse(s) : {} } catch { return {} } })
+  const [negotiationExpanded, setNegotiationExpanded] = useState({})
 
   const getLanguageInstruction = (lang = outputLanguage) => {
     console.log('[JobAgent] getLanguageInstruction called — outputLanguage:', outputLanguage, '— lang param:', lang)
@@ -314,6 +321,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('jobagent_autoapply_queue', JSON.stringify(autoQueue))
   }, [autoQueue])
+
+  useEffect(() => {
+    localStorage.setItem('jobagent_salary_negotiations', JSON.stringify(salaryNegotiations))
+  }, [salaryNegotiations])
 
   useEffect(() => {
     localStorage.setItem('jobagent_followups', JSON.stringify(followups))
@@ -582,6 +593,96 @@ Return ONLY valid JSON, no markdown:
       showToast('Preparation failed: ' + e.message, 3000)
     }
     setAutoPrepping(prev => { const s = new Set(prev); s.delete(jobId); return s })
+  }
+
+  const runNegotiationRound1 = async (jobId) => {
+    const neg = salaryNegotiations[jobId]
+    if (!neg) return
+    setSalaryNegotiations(prev => ({ ...prev, [jobId]: { ...prev[jobId], loading: true } }))
+    const offeredSalary = neg.yearlyGross || neg.offeredSalary || 0
+    const { jobLevel, location, industry, benefits } = neg
+    const prompt = `Generate salary negotiation guidance for a ${jobLevel} level role in ${industry} based in ${location}. Offered salary: EUR ${offeredSalary} per year (monthly brut: EUR ${neg.monthlyBrut || Math.round(offeredSalary / 12)}). ${benefits ? `Benefits offered: ${benefits}.` : ''}
+Return ONLY valid JSON, no markdown:
+{"marketBenchmark":{"min":60000,"max":95000,"median":78000,"reasoning":"market data reasoning here"},"emailScript":"Professional counter-offer email script","talkingPoints":["point1","point2","point3"]}` + getLanguageInstruction()
+    const MAX_RETRIES = 2
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 1000))
+      try {
+        const raw = await callClaude(prompt, 1500)
+        const parsed = JSON.parse(extractJSON(raw))
+        const newRound = { roundNum: 1, ...parsed, timestamp: new Date().toISOString() }
+        setSalaryNegotiations(prev => ({ ...prev, [jobId]: { ...prev[jobId], loading: false, currentRound: 2, rounds: [newRound] } }))
+        return
+      } catch (e) {
+        console.error(`[JobAgent] negotiation round 1 attempt ${attempt + 1} failed:`, e.message)
+        if (attempt === MAX_RETRIES) {
+          setSalaryNegotiations(prev => ({ ...prev, [jobId]: { ...prev[jobId], loading: false, error: e.message } }))
+        }
+      }
+    }
+  }
+
+  const runNegotiationRound2Plus = async (jobId) => {
+    const neg = salaryNegotiations[jobId]
+    if (!neg) return
+    const { jobLevel, role, company, location, rounds, companyResponse, sentiment } = neg
+    const offeredSalary = neg.yearlyGross || neg.offeredSalary || 0
+    const round1 = rounds?.[0]
+    const min = round1?.marketBenchmark?.min || 0
+    const max = round1?.marketBenchmark?.max || 0
+    const safeJobLevel = jobLevel || 'Mid'
+    const safeRole = role || 'role'
+    const safeCompany = company || 'company'
+    const safeLocation = location || 'Belgium'
+    const safeSentiment = sentiment || 'neutral'
+    const safeResponse = companyResponse || '(no explicit response provided)'
+
+    console.log('[JobAgent] runNegotiationRound2Plus — jobId:', jobId, '| round:', neg.currentRound, '| sentiment:', safeSentiment, '| salary:', offeredSalary, '| min:', min, '| max:', max)
+    const apiKey = localStorage.getItem('jobagent_api_key') || import.meta.env.VITE_ANTHROPIC_API_KEY
+    console.log('[JobAgent] API key:', apiKey ? apiKey.slice(0, 8) + '...' + apiKey.slice(-4) : '(MISSING!)', '| length:', apiKey?.length || 0)
+
+    setSalaryNegotiations(prev => ({ ...prev, [jobId]: { ...prev[jobId], loading: true, error: null } }))
+
+    const prompt = `You are a salary negotiation expert. The candidate is negotiating a ${safeJobLevel} ${safeRole} role at ${safeCompany} in ${safeLocation}. Offered: EUR ${offeredSalary}. Market range: EUR ${min} to EUR ${max}. Company response: ${safeResponse}. Candidate sentiment: ${safeSentiment}. Return ONLY valid JSON, no markdown: {"analysis":"brief analysis of the company position","advice":"strategic guidance for next move","nextMove":"specific concrete recommendation","scriptSuggestion":"suggested email or talking point if appropriate"}` + getLanguageInstruction()
+
+    console.log('[JobAgent] Round 2+ prompt (first 200 chars):', prompt.slice(0, 200))
+
+    const MAX_RETRIES = 2
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 1000))
+      try {
+        const raw = await callClaude(prompt, 1500)
+        const parsed = JSON.parse(extractJSON(raw))
+        const newRound = { roundNum: (rounds?.length ?? 0) + 1, companyResponse, sentiment, ...parsed, timestamp: new Date().toISOString() }
+        setSalaryNegotiations(prev => ({
+          ...prev,
+          [jobId]: { ...prev[jobId], loading: false, currentRound: Math.min((neg.currentRound || 2) + 1, 6), companyResponse: '', sentiment: '', rounds: [...(rounds || []), newRound] }
+        }))
+        return
+      } catch (e) {
+        console.error(`[JobAgent] negotiation round 2+ attempt ${attempt + 1} failed:`, e.message)
+        if (attempt === MAX_RETRIES) {
+          setSalaryNegotiations(prev => ({ ...prev, [jobId]: { ...prev[jobId], loading: false, error: e.message } }))
+        }
+      }
+    }
+  }
+
+  const initNegotiation = (app) => {
+    setSalaryNegotiations(prev => {
+      if (prev[app.id]) return prev
+      return { ...prev, [app.id]: { jobId: app.id, company: app.company, role: app.role, location: app.location || 'Brussels, Belgium', monthlyBrut: '', yearlyGross: '', jobLevel: 'Mid', industry: 'SaaS', benefits: '', currentRound: 1, status: 'active', rounds: [], companyResponse: '', sentiment: '', error: null } }
+    })
+    setNegotiationExpanded(prev => ({ ...prev, [app.id]: true }))
+  }
+
+  const exportNegotiation = (jobId) => {
+    const neg = salaryNegotiations[jobId]
+    if (!neg) return
+    const blob = new Blob([JSON.stringify(neg, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href = url; a.download = `negotiation-${neg.company}-${neg.role}.json`.replace(/\s+/g, '-'); a.click()
+    URL.revokeObjectURL(url)
   }
 
   const analyseJD = async () => {
@@ -2077,6 +2178,274 @@ Return ONLY valid JSON, no markdown:
                       </div>
                     ))}
                   </div>
+                )}
+              </div>
+            )
+          })()}
+
+          {/* ── SALARY NEGOTIATION COACH ── */}
+          {tab === 'negotiation' && (() => {
+            const offerApps = apps.filter(a => a.status === 'Offer' || a.status === 'Negotiation')
+            const LEVELS = ['Junior', 'Mid', 'Senior', 'Lead', 'Manager', 'Director']
+            const INDUSTRIES = ['SaaS', 'Fintech', 'Real Estate', 'Consulting', 'E-commerce', 'HealthTech', 'HR Tech', 'Other']
+            const SENTIMENTS = [
+              { value: 'open',       label: "They're open",    color: '#34D399' },
+              { value: 'firm',       label: "They're firm",    color: '#F87171' },
+              { value: 'countered',  label: 'They countered',  color: '#FBBF24' },
+            ]
+            return (
+              <div>
+                <div style={{ marginBottom: 24 }}>
+                  <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.5px', marginBottom: 4 }}>Salary Negotiation <span style={gT}>Coach</span></h1>
+                  <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.36)' }}>AI-powered strategy for every round of your salary negotiation.</p>
+                </div>
+
+                {offerApps.length === 0 ? (
+                  <div style={{ ...C.card, textAlign: 'center', padding: 56 }}>
+                    <div style={{ fontSize: 36, marginBottom: 14 }}>💰</div>
+                    <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 8 }}>No offers yet</div>
+                    <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.36)', lineHeight: 1.7 }}>
+                      When you mark an application as <strong style={{ color: 'rgba(255,255,255,0.6)' }}>Offer</strong> or <strong style={{ color: 'rgba(255,255,255,0.6)' }}>Negotiation</strong> in the Applications tracker, it will appear here for coaching.
+                    </div>
+                  </div>
+                ) : (
+                  offerApps.map(app => {
+                    const isOffer = app.status === 'Offer'
+                    const borderColor = isOffer ? 'rgba(52,211,153,0.35)' : 'rgba(249,115,22,0.4)'
+                    const accentColor = isOffer ? '#34D399' : '#F97316'
+                    const glowBg = isOffer ? 'rgba(52,211,153,0.05)' : 'rgba(249,115,22,0.05)'
+                    const neg = salaryNegotiations[app.id] || null
+                    const expanded = negotiationExpanded[app.id]
+                    const loading = neg?.loading
+                    const rounds = neg?.rounds || []
+                    const currentRound = neg?.currentRound || 1
+
+                    return (
+                      <div key={app.id} style={{ border: `1px solid ${borderColor}`, borderRadius: 14, background: glowBg, padding: 20, marginBottom: 16 }}>
+                        {/* Card header */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 5 }}>
+                              <span style={{ fontSize: 16, fontWeight: 700 }}>{app.role}</span>
+                              <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 9px', borderRadius: 20, background: isOffer ? 'rgba(52,211,153,0.15)' : 'rgba(249,115,22,0.15)', color: accentColor, border: `1px solid ${borderColor}` }}>{app.status}</span>
+                              {rounds.length > 0 && <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>Round {Math.min(currentRound, 5)} of 5</span>}
+                            </div>
+                            <div style={{ fontSize: 13, color: 'rgba(255,255,255,0.5)' }}>{app.company}{app.location ? ` · ${app.location}` : ''}</div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            {rounds.length > 0 && (
+                              <button onClick={() => exportNegotiation(app.id)} style={{ ...C.ghost, fontSize: 11, padding: '6px 12px' }}>Export ↓</button>
+                            )}
+                            <button onClick={() => {
+                              if (!neg) initNegotiation(app)
+                              else setNegotiationExpanded(prev => ({ ...prev, [app.id]: !prev[app.id] }))
+                            }} style={{ ...C.btn, fontSize: 12, padding: '8px 18px', background: neg ? 'rgba(255,255,255,0.08)' : G, border: neg ? '1px solid rgba(255,255,255,0.1)' : 'none', color: neg ? 'rgba(255,255,255,0.75)' : 'white' }}>
+                              {!neg ? '💰 Start Negotiation' : expanded ? 'Collapse ▲' : `Continue (Round ${Math.min(currentRound, 5)}) ▼`}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Market snapshot if round 1 done */}
+                        {rounds.length > 0 && !expanded && (
+                          <div style={{ marginTop: 14, display: 'flex', gap: 16 }}>
+                            {[
+                              { l: 'Offered/yr', v: `€${Number(neg.yearlyGross || neg.offeredSalary || 0).toLocaleString()}`, c: 'rgba(255,255,255,0.5)' },
+                              { l: 'Market min', v: `€${(rounds[0]?.marketBenchmark?.min || 0).toLocaleString()}`, c: '#34D399' },
+                              { l: 'Market max', v: `€${(rounds[0]?.marketBenchmark?.max || 0).toLocaleString()}`, c: '#34D399' },
+                              { l: 'Median', v: `€${(rounds[0]?.marketBenchmark?.median || 0).toLocaleString()}`, c: accentColor },
+                            ].map(({ l, v, c }) => (
+                              <div key={l} style={{ flex: 1, padding: '10px 14px', background: 'rgba(255,255,255,0.04)', borderRadius: 9, textAlign: 'center' }}>
+                                <div style={{ fontSize: 15, fontWeight: 700, color: c }}>{v}</div>
+                                <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.3)', marginTop: 2 }}>{l}</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Expanded area */}
+                        {expanded && (
+                          <div style={{ marginTop: 20 }}>
+                            {/* Round 1 input form */}
+                            {currentRound === 1 && rounds.length === 0 && (
+                              <div>
+                                <div style={{ ...C.sec, marginBottom: 16 }}>Round 1 — Market Benchmark & Counter-Offer</div>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+                                  {/* Row 1: Monthly + Yearly */}
+                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                                    <div>
+                                      <label style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', marginBottom: 6, display: 'block', letterSpacing: 0.8, textTransform: 'uppercase' }}>Monthly salary (brut)</label>
+                                      <input type="number" value={neg.monthlyBrut} onChange={e => {
+                                        const m = e.target.value
+                                        const y = m !== '' ? String(Math.round(Number(m) * 12)) : ''
+                                        setSalaryNegotiations(p => ({ ...p, [app.id]: { ...p[app.id], monthlyBrut: m, yearlyGross: y } }))
+                                      }} placeholder="6250" style={{ ...C.inp }} />
+                                    </div>
+                                    <div>
+                                      <label style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', marginBottom: 6, display: 'block', letterSpacing: 0.8, textTransform: 'uppercase' }}>Yearly salary</label>
+                                      <input type="number" value={neg.yearlyGross} onChange={e => {
+                                        const y = e.target.value
+                                        const m = y !== '' ? String(Math.round(Number(y) / 12)) : ''
+                                        setSalaryNegotiations(p => ({ ...p, [app.id]: { ...p[app.id], yearlyGross: y, monthlyBrut: m } }))
+                                      }} placeholder="75000" style={{ ...C.inp }} />
+                                    </div>
+                                  </div>
+
+                                  {/* Row 2: Job Level + Location */}
+                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                                    <div>
+                                      <label style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', marginBottom: 6, display: 'block', letterSpacing: 0.8, textTransform: 'uppercase' }}>Job Level</label>
+                                      <select value={neg.jobLevel} onChange={e => setSalaryNegotiations(p => ({ ...p, [app.id]: { ...p[app.id], jobLevel: e.target.value } }))} style={{ ...C.inp, color: 'white', backgroundColor: '#0e0e1a', appearance: 'auto' }}>
+                                        {LEVELS.map(l => <option key={l} value={l} style={{ background: '#0e0e1a', color: 'white' }}>{l}</option>)}
+                                      </select>
+                                    </div>
+                                    <div>
+                                      <label style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', marginBottom: 6, display: 'block', letterSpacing: 0.8, textTransform: 'uppercase' }}>Location</label>
+                                      <input value={neg.location} onChange={e => setSalaryNegotiations(p => ({ ...p, [app.id]: { ...p[app.id], location: e.target.value } }))} placeholder="Brussels, Belgium" style={{ ...C.inp }} />
+                                    </div>
+                                  </div>
+
+                                  {/* Row 3: Industry full width */}
+                                  <div>
+                                    <label style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', marginBottom: 6, display: 'block', letterSpacing: 0.8, textTransform: 'uppercase' }}>Industry</label>
+                                    <select value={neg.industry} onChange={e => setSalaryNegotiations(p => ({ ...p, [app.id]: { ...p[app.id], industry: e.target.value } }))} style={{ ...C.inp, color: 'white', backgroundColor: '#0e0e1a', appearance: 'auto', width: '100%' }}>
+                                      {INDUSTRIES.map(i => <option key={i} value={i} style={{ background: '#0e0e1a', color: 'white' }}>{i}</option>)}
+                                    </select>
+                                  </div>
+
+                                  {/* Row 4: Benefits full width */}
+                                  <div>
+                                    <label style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', marginBottom: 6, display: 'block', letterSpacing: 0.8, textTransform: 'uppercase' }}>Benefits offered (optional)</label>
+                                    <input value={neg.benefits} onChange={e => setSalaryNegotiations(p => ({ ...p, [app.id]: { ...p[app.id], benefits: e.target.value } }))} placeholder="Health insurance, meal vouchers, company car…" style={{ ...C.inp, width: '100%' }} />
+                                  </div>
+
+                                </div>
+                                <div style={{ marginTop: 16 }}>
+                                  <button onClick={() => runNegotiationRound1(app.id)} disabled={loading || (!neg.yearlyGross && !neg.monthlyBrut)} style={{ ...C.btn, opacity: loading || (!neg.yearlyGross && !neg.monthlyBrut) ? 0.5 : 1 }}>
+                                    {loading ? '↻ Analysing market…' : '✦ Get Market Benchmark'}
+                                  </button>
+                                  {neg.error && <div style={{ fontSize: 12, color: '#F87171', marginTop: 8 }}>{neg.error}</div>}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Round 2+ input */}
+                            {currentRound >= 2 && currentRound <= 5 && (
+                              <div>
+                                <div style={{ ...C.sec, marginBottom: 14 }}>Round {Math.min(currentRound, 5)} — Company Response</div>
+                                <div style={{ marginBottom: 12 }}>
+                                  <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginBottom: 8 }}>Company's response sentiment</div>
+                                  <div style={{ display: 'flex', gap: 8 }}>
+                                    {SENTIMENTS.map(s => (
+                                      <button key={s.value} onClick={() => setSalaryNegotiations(p => ({ ...p, [app.id]: { ...p[app.id], sentiment: s.value } }))} style={{ padding: '7px 14px', borderRadius: 9, border: `1px solid ${neg.sentiment === s.value ? s.color : 'rgba(255,255,255,0.1)'}`, background: neg.sentiment === s.value ? `${s.color}20` : 'rgba(255,255,255,0.04)', color: neg.sentiment === s.value ? s.color : 'rgba(255,255,255,0.4)', fontSize: 12, cursor: 'pointer', fontFamily: 'inherit', fontWeight: neg.sentiment === s.value ? 700 : 400 }}>
+                                        {s.label}
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+                                <div style={{ marginBottom: 14 }}>
+                                  <label style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', display: 'block', marginBottom: 4 }}>Their exact response (optional but helpful)</label>
+                                  <textarea value={neg.companyResponse} onChange={e => setSalaryNegotiations(p => ({ ...p, [app.id]: { ...p[app.id], companyResponse: e.target.value } }))} placeholder="e.g. 'We can offer €78,000 which is our maximum for this band…'" rows={3} style={{ ...C.inp, fontSize: 13, resize: 'vertical' }} />
+                                </div>
+                                <button onClick={() => runNegotiationRound2Plus(app.id)} disabled={loading || !neg.sentiment} style={{ ...C.btn, opacity: loading || !neg.sentiment ? 0.5 : 1 }}>
+                                  {loading ? '↻ Building strategy…' : '✦ Get Next Move'}
+                                </button>
+                                {neg.error && <div style={{ fontSize: 12, color: '#F87171', marginTop: 8 }}>{neg.error}</div>}
+                              </div>
+                            )}
+
+                            {currentRound > 5 && (
+                              <div style={{ padding: 16, background: 'rgba(52,211,153,0.08)', borderRadius: 10, border: '1px solid rgba(52,211,153,0.2)', fontSize: 13, color: '#34D399', textAlign: 'center' }}>
+                                🏆 You've completed 5 rounds. Export your session for a full record.
+                              </div>
+                            )}
+
+                            {/* Rounds history */}
+                            {rounds.length > 0 && (
+                              <div style={{ marginTop: 24 }}>
+                                <div style={{ ...C.sec, marginBottom: 16 }}>Negotiation History</div>
+                                {rounds.map((r, idx) => (
+                                  <div key={idx} style={{ border: '1px solid rgba(255,255,255,0.08)', borderRadius: 11, padding: 16, marginBottom: 12, background: 'rgba(255,255,255,0.02)' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
+                                      <span style={{ fontSize: 12, fontWeight: 700, color: accentColor }}>Round {r.roundNum}</span>
+                                      <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.25)' }}>{new Date(r.timestamp).toLocaleDateString()}</span>
+                                    </div>
+
+                                    {/* Round 1: market benchmark */}
+                                    {r.roundNum === 1 && r.marketBenchmark && (
+                                      <>
+                                        <div style={{ display: 'flex', gap: 10, marginBottom: 12 }}>
+                                          {[
+                                            { l: 'Market Min', v: `€${(r.marketBenchmark.min || 0).toLocaleString()}` },
+                                            { l: 'Median', v: `€${(r.marketBenchmark.median || 0).toLocaleString()}` },
+                                            { l: 'Market Max', v: `€${(r.marketBenchmark.max || 0).toLocaleString()}` },
+                                          ].map(({ l, v }) => (
+                                            <div key={l} style={{ flex: 1, padding: '8px 12px', background: 'rgba(255,255,255,0.04)', borderRadius: 8, textAlign: 'center' }}>
+                                              <div style={{ fontSize: 14, fontWeight: 700, ...gT }}>{v}</div>
+                                              <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', marginTop: 2, letterSpacing: 0.8 }}>{l.toUpperCase()}</div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                        <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.45)', lineHeight: 1.6, marginBottom: 12, padding: '8px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: 8 }}>
+                                          {r.marketBenchmark.reasoning}
+                                        </div>
+                                        {r.emailScript && (
+                                          <div style={{ marginBottom: 12 }}>
+                                            <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 8 }}>Email Script</div>
+                                            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.72)', lineHeight: 1.75, whiteSpace: 'pre-wrap', padding: '10px 12px', background: 'rgba(124,58,237,0.08)', border: '1px solid rgba(124,58,237,0.2)', borderRadius: 8 }}>{r.emailScript}</div>
+                                            <button onClick={() => navigator.clipboard.writeText(r.emailScript).then(() => showToast('Email script copied', 2000))} style={{ ...C.ghost, fontSize: 11, padding: '6px 12px', marginTop: 8 }}>Copy Email Script</button>
+                                          </div>
+                                        )}
+                                        {r.talkingPoints?.length > 0 && (
+                                          <div>
+                                            <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 8 }}>Talking Points</div>
+                                            {r.talkingPoints.map((p, i) => (
+                                              <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginBottom: 6 }}>
+                                                <span style={{ color: accentColor, fontSize: 11, marginTop: 2, flexShrink: 0 }}>▸</span>
+                                                <span style={{ fontSize: 12, color: 'rgba(255,255,255,0.72)', lineHeight: 1.6 }}>{p}</span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        )}
+                                      </>
+                                    )}
+
+                                    {/* Rounds 2+: strategy advice */}
+                                    {r.roundNum >= 2 && (
+                                      <>
+                                        {r.companyResponse && (
+                                          <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.45)', marginBottom: 10, fontStyle: 'italic', padding: '6px 10px', borderLeft: `2px solid ${accentColor}` }}>"{r.companyResponse}"</div>
+                                        )}
+                                        {r.sentiment && (
+                                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, padding: '3px 10px', borderRadius: 20, marginBottom: 10, background: 'rgba(255,255,255,0.05)', color: 'rgba(255,255,255,0.5)' }}>
+                                            Sentiment: {SENTIMENTS.find(s => s.value === r.sentiment)?.label || r.sentiment}
+                                          </div>
+                                        )}
+                                        {[
+                                          { l: 'Analysis', v: r.analysis },
+                                          { l: 'Strategic Advice', v: r.advice },
+                                          { l: 'Next Move', v: r.nextMove },
+                                          { l: 'Suggested Script', v: r.scriptSuggestion },
+                                        ].filter(x => x.v).map(({ l, v }) => (
+                                          <div key={l} style={{ marginBottom: 10 }}>
+                                            <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', letterSpacing: 1.2, textTransform: 'uppercase', marginBottom: 5 }}>{l}</div>
+                                            <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.72)', lineHeight: 1.7, padding: '8px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: 8, whiteSpace: 'pre-wrap' }}>{v}</div>
+                                            {l === 'Suggested Script' && (
+                                              <button onClick={() => navigator.clipboard.writeText(v).then(() => showToast('Script copied', 2000))} style={{ ...C.ghost, fontSize: 11, padding: '5px 12px', marginTop: 6 }}>Copy Script</button>
+                                            )}
+                                          </div>
+                                        ))}
+                                      </>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })
                 )}
               </div>
             )
