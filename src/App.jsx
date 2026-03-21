@@ -171,7 +171,7 @@ const callClaude = async (prompt, maxTokens = 1500) => {
 
 const C = {
   card:  { background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, padding: 20 },
-  inp:   { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 9, padding: '9px 13px', color: 'white', fontSize: 13, outline: 'none', width: '100%', fontFamily: 'inherit' },
+  inp:   { background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 9, padding: '6px 13px', color: 'white', fontSize: 13, outline: 'none', width: '100%', fontFamily: 'inherit', boxSizing: 'border-box', height: '34px' },
   btn:   { padding: '10px 22px', background: G, border: 'none', borderRadius: 9, color: 'white', fontSize: 13, fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' },
   ghost: { padding: '10px 18px', background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 9, color: 'rgba(255,255,255,0.65)', fontSize: 13, cursor: 'pointer', fontFamily: 'inherit' },
   sec:   { fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 12 },
@@ -252,13 +252,28 @@ export default function App() {
   const [autoNewJob, setAutoNewJob]       = useState({ title: '', company: '', url: '', platform: 'LinkedIn' })
   const [autoPrepping, setAutoPrepping]   = useState(new Set())
   const [queuePrompt, setQueuePrompt]     = useState(null)
-  const [followups, setFollowups]         = useState(() => { try { const s = localStorage.getItem('jobagent_followups'); return s ? JSON.parse(s) : [] } catch { return [] } })
+  const [followups, setFollowups]         = useState(() => { try { const s = localStorage.getItem('jobagent_followups'); return s ? JSON.parse(s).map(f => ({ ...f, archived: f.archived ?? false })) : [] } catch { return [] } })
   const [fuDrafting, setFuDrafting]       = useState({})
   const [fuSending, setFuSending]         = useState({})
   const [fuExpanded, setFuExpanded]       = useState({})
   const [outputLanguage, setOutputLanguage] = useState(() => localStorage.getItem('jobagent_output_language') || 'EN')
   const [salaryNegotiations, setSalaryNegotiations] = useState(() => { try { const s = localStorage.getItem('jobagent_salary_negotiations'); return s ? JSON.parse(s) : {} } catch { return {} } })
   const [negotiationExpanded, setNegotiationExpanded] = useState({})
+  const [userProfile, setUserProfile] = useState(() => {
+    try {
+      const stored = localStorage.getItem('jobagent_user_profile')
+      if (stored) return JSON.parse(stored)
+    } catch (e) { console.log('[JobAgent] Profile load error:', e.message) }
+    return {
+      name: MICHAEL.name, title: MICHAEL.title, email: MICHAEL.email,
+      location: MICHAEL.location, summary: MICHAEL.summary,
+      skills: [...MICHAEL.skills],
+      experience: MICHAEL.experience.map(e => ({ ...e, bullets: [...e.bullets] })),
+      languages: MICHAEL.languages.map(l => ({ ...l })),
+      education: MICHAEL.education,
+    }
+  })
+  const [newSkillInput, setNewSkillInput] = useState('')
 
   const getLanguageInstruction = (lang = outputLanguage) => {
     console.log('[JobAgent] getLanguageInstruction called — outputLanguage:', outputLanguage, '— lang param:', lang)
@@ -325,6 +340,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('jobagent_salary_negotiations', JSON.stringify(salaryNegotiations))
   }, [salaryNegotiations])
+
+  useEffect(() => {
+    try { localStorage.setItem('jobagent_user_profile', JSON.stringify(userProfile)) } catch (e) { console.log('[JobAgent] Profile save error:', e.message) }
+  }, [userProfile])
 
   useEffect(() => {
     localStorage.setItem('jobagent_followups', JSON.stringify(followups))
@@ -400,10 +419,16 @@ export default function App() {
       notes:   '',
       url:     params.get('url') || '',
     }
+    let isNew = false
     setApps(prev => {
       if (prev.some(a => a.url && a.url === entry.url)) return prev
+      isNew = true
       return [entry, ...prev]
     })
+    if (isNew && entry.status === 'Applied') {
+      const dueDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      setFollowups(p => [...p, { id: Date.now() + Math.random(), appId: entry.id, company: entry.company, role: entry.role, type: 'applied-followup', status: 'pending', dueDate, draftedEmail: null, createdAt: new Date().toISOString().slice(0, 10), recipientEmail: '' }])
+    }
     setTab('tracker')
     showToast(`✓ "${entry.role}" at ${entry.company} added to tracker`)
     setQueuePrompt({ title: entry.role, company: entry.company, url: entry.url, platform: entry.url?.includes('linkedin') ? 'LinkedIn' : entry.url?.includes('welcometothejungle') ? 'WTTJ' : 'LinkedIn', matchScore: 0 })
@@ -473,12 +498,41 @@ export default function App() {
 
   const addApp = () => {
     if (!newApp.company.trim() || !newApp.role.trim()) return
-    setApps(p => [...p, { ...newApp, id: Date.now() }])
+    const newEntry = { ...newApp, id: Date.now() }
+    setApps(p => [...p, newEntry])
+    if (newApp.status === 'Applied') {
+      const dueDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+      setFollowups(p => [...p, { id: Date.now() + Math.random(), appId: newEntry.id, company: newEntry.company, role: newEntry.role, type: 'applied-followup', status: 'pending', dueDate, draftedEmail: null, createdAt: today, recipientEmail: '' }])
+    }
     setNewApp({ company: '', role: '', date: today, status: 'Applied', notes: '', url: '' })
     setShowForm(false)
   }
-  const updStatus = (id, s) => setApps(p => p.map(a => a.id === id ? { ...a, status: s } : a))
-  const delApp    = (id)    => setApps(p => p.filter(a => a.id !== id))
+  const updStatus = (id, newStatus) => {
+    const app = apps.find(a => a.id === id)
+    setApps(p => p.map(a => a.id === id ? { ...a, status: newStatus } : a))
+    if (!app) return
+    setFollowups(p => {
+      if (newStatus === 'Applied') {
+        const existing = p.find(f => f.appId === id && f.type === 'applied-followup')
+        if (!existing) {
+          const dueDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+          return [...p, { id: Date.now() + Math.random(), appId: id, company: app.company, role: app.role, type: 'applied-followup', status: 'pending', dueDate, draftedEmail: null, createdAt: today, recipientEmail: '', archived: false }]
+        }
+        if (existing.archived) {
+          const dueDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+          return p.map(f => f.appId === id && f.type === 'applied-followup' ? { ...f, archived: false, dueDate } : f)
+        }
+        return p
+      } else {
+        // Archive any non-sent applied-followup when leaving Applied status
+        return p.map(f => f.appId === id && f.type === 'applied-followup' && f.status !== 'sent' ? { ...f, archived: true } : f)
+      }
+    })
+  }
+  const delApp = (id) => {
+    setApps(p => p.filter(a => a.id !== id))
+    setFollowups(p => p.filter(f => f.appId !== id))
+  }
 
   const parseIntelJobs = (raw) => {
     const jsonStr = extractJSON(raw)
@@ -505,7 +559,7 @@ Return ONLY a JSON array, no markdown, no text before or after:
       },
       body: JSON.stringify({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 600,
+        max_tokens: outputLanguage === 'EN' ? 600 : 900,
         messages: [{ role: 'user', content: prompt }],
       }),
     })
@@ -573,8 +627,8 @@ Return ONLY a JSON array, no markdown, no text before or after:
     if (!job) return
     setAutoPrepping(prev => new Set([...prev, jobId]))
     try {
-      const profile = `${MICHAEL.name}, ${MICHAEL.title}. Experience: ${MICHAEL.experience.map(e => `${e.role} at ${e.company} (${e.period})`).join('; ')}. Skills: ${MICHAEL.skills.slice(0, 6).join(', ')}. Languages: EN/FR/NL native/fluent.`
-      const prompt = `Write application materials for ${MICHAEL.name} applying to "${job.title}" at "${job.company}". Profile: ${profile}
+      const profile = `${userProfile.name}, ${userProfile.title}. Experience: ${userProfile.experience.map(e => `${e.role} at ${e.company} (${e.period})`).join('; ')}. Skills: ${userProfile.skills.slice(0, 6).join(', ')}. Languages: ${userProfile.languages.map(l => l.l).join('/')}.`
+      const prompt = `Write application materials for ${userProfile.name} applying to "${job.title}" at "${job.company}". Profile: ${profile}
 
 Return ONLY valid JSON, no markdown:
 {"coverLetter":"3 concise paragraphs under 200 words","formAnswers":{"whyThisRole":"2 sentence answer tailored to the role","describeExperience":"2 sentence answer using real experience","salaryExpectation":"€80,000–€110,000 depending on full package","availability":"Available immediately","whyThisCompany":"1 sentence answer"}}` + getLanguageInstruction()
@@ -600,8 +654,9 @@ Return ONLY valid JSON, no markdown:
     if (!neg) return
     setSalaryNegotiations(prev => ({ ...prev, [jobId]: { ...prev[jobId], loading: true } }))
     const offeredSalary = neg.yearlyGross || neg.offeredSalary || 0
-    const { jobLevel, location, industry, benefits } = neg
-    const prompt = `Generate salary negotiation guidance for a ${jobLevel} level role in ${industry} based in ${location}. Offered salary: EUR ${offeredSalary} per year (monthly brut: EUR ${neg.monthlyBrut || Math.round(offeredSalary / 12)}). ${benefits ? `Benefits offered: ${benefits}.` : ''}
+    const { jobLevel, location, benefits } = neg
+    const industryForPrompt = neg.industry === 'Other' ? (neg.customIndustry || 'Other') : neg.industry
+    const prompt = `Generate salary negotiation guidance for a ${jobLevel} level role in ${industryForPrompt} based in ${location}. Offered salary: EUR ${offeredSalary} per year (monthly brut: EUR ${neg.monthlyBrut || Math.round(offeredSalary / 12)}). ${benefits ? `Benefits offered: ${benefits}.` : ''}
 Return ONLY valid JSON, no markdown:
 {"marketBenchmark":{"min":60000,"max":95000,"median":78000,"reasoning":"market data reasoning here"},"emailScript":"Professional counter-offer email script","talkingPoints":["point1","point2","point3"]}` + getLanguageInstruction()
     const MAX_RETRIES = 2
@@ -671,7 +726,7 @@ Return ONLY valid JSON, no markdown:
   const initNegotiation = (app) => {
     setSalaryNegotiations(prev => {
       if (prev[app.id]) return prev
-      return { ...prev, [app.id]: { jobId: app.id, company: app.company, role: app.role, location: app.location || 'Brussels, Belgium', monthlyBrut: '', yearlyGross: '', jobLevel: 'Mid', industry: 'SaaS', benefits: '', currentRound: 1, status: 'active', rounds: [], companyResponse: '', sentiment: '', error: null } }
+      return { ...prev, [app.id]: { jobId: app.id, company: app.company, role: app.role, location: app.location || 'Brussels, Belgium', monthlyBrut: 0, yearlyGross: 0, jobLevel: 'Mid', industry: 'SaaS', customIndustry: '', benefits: '', currentRound: 1, status: 'active', rounds: [], companyResponse: '', sentiment: '', error: null } }
     })
     setNegotiationExpanded(prev => ({ ...prev, [app.id]: true }))
   }
@@ -688,8 +743,8 @@ Return ONLY valid JSON, no markdown:
   const analyseJD = async () => {
     if (!jd.trim()) return
     setAnalysing(true); setAnalysis(null); setAErr('')
-    const prof = `Name:${MICHAEL.name}\nTitle:${MICHAEL.title}\nSummary:${MICHAEL.summary}\nSkills:${MICHAEL.skills.join(', ')}\nExperience:${MICHAEL.experience.map(e => `${e.role} at ${e.company} (${e.period})`).join(' | ')}\nLanguages:${MICHAEL.languages.map(l => `${l.l} ${l.lv}`).join(', ')}`
-    const prompt = `You are an expert career coach. Analyse this job description for the candidate and return ONLY valid JSON, no markdown, no code fences, no preamble.\n\nCANDIDATE:\n${prof}\n\nJOB DESCRIPTION:\n${jd}\n\nReturn exactly:\n{"jobTitle":"title","company":"company or Unknown","matchScore":85,"matchedSkills":["skill1","skill2"],"gaps":["gap1"],"tailoredSummary":"3-sentence first-person summary tailored to this role using Michael's actual experience","coverLetter":"Professional 3-paragraph cover letter for this exact role. Sign as Michael Van Gyseghem.","keyTalkingPoints":["point1","point2","point3"]}` + getLanguageInstruction()
+    const prof = `Name:${userProfile.name}\nTitle:${userProfile.title}\nSummary:${userProfile.summary}\nSkills:${userProfile.skills.join(', ')}\nExperience:${userProfile.experience.map(e => `${e.role} at ${e.company} (${e.period})`).join(' | ')}\nLanguages:${userProfile.languages.map(l => `${l.l} ${l.lv}`).join(', ')}`
+    const prompt = `You are an expert career coach. Analyse this job description for the candidate and return ONLY valid JSON, no markdown, no code fences, no preamble.\n\nCANDIDATE:\n${prof}\n\nJOB DESCRIPTION:\n${jd}\n\nReturn exactly:\n{"jobTitle":"title","company":"company or Unknown","matchScore":85,"matchedSkills":["skill1","skill2"],"gaps":["gap1"],"tailoredSummary":"3-sentence first-person summary tailored to this role","coverLetter":"Professional 3-paragraph cover letter for this exact role. Sign as ${userProfile.name}.","keyTalkingPoints":["point1","point2","point3"]}` + getLanguageInstruction()
     const MAX_RETRIES = 2
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       if (attempt > 0) {
@@ -715,8 +770,8 @@ Return ONLY valid JSON, no markdown:
     if (!iJd.trim()) return
     setGenerating(true); setQs(null); setIErr('')
     const questionCount = (outputLanguage === 'FR' || outputLanguage === 'NL') ? 4 : 6
-    const exp = MICHAEL.experience.map(e => `${e.role} at ${e.company}: ${e.bullets[0]}`).join(' | ')
-    const prompt = `You are an expert interview coach. Generate ${questionCount} targeted interview questions with STAR-format answers using this candidate's specific experience. Return ONLY valid JSON, no markdown.\n\nCANDIDATE: ${MICHAEL.name}\nEXPERIENCE: ${exp}\nSKILLS: ${MICHAEL.skills.join(', ')}\n\nJOB DESCRIPTION:\n${iJd}\n\nReturn exactly:\n{"questions":[{"question":"?","type":"Behavioral","difficulty":"Medium","suggestedAnswer":"STAR-format answer using Michael's real experience (3-4 sentences)"}]}` + getLanguageInstruction()
+    const exp = userProfile.experience.map(e => `${e.role} at ${e.company}: ${e.bullets[0]}`).join(' | ')
+    const prompt = `You are an expert interview coach. Generate ${questionCount} targeted interview questions with STAR-format answers using this candidate's specific experience. Return ONLY valid JSON, no markdown.\n\nCANDIDATE: ${userProfile.name}\nEXPERIENCE: ${exp}\nSKILLS: ${userProfile.skills.join(', ')}\n\nJOB DESCRIPTION:\n${iJd}\n\nReturn exactly:\n{"questions":[{"question":"?","type":"Behavioral","difficulty":"Medium","suggestedAnswer":"STAR-format answer using the candidate's real experience (3-4 sentences)"}]}` + getLanguageInstruction()
     const MAX_RETRIES = 2
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       if (attempt > 0) {
@@ -870,7 +925,7 @@ Return ONLY valid JSON, no markdown:
   const draftReply = async (id, from, subject, snippet) => {
     setReplyLoading(p => ({ ...p, [id]: true }))
     try {
-      const prompt = `You are drafting a professional email reply on behalf of ${MICHAEL.name}, ${MICHAEL.title}.\n\nINCOMING EMAIL:\nFrom: ${from}\nSubject: ${subject}\nContent: ${snippet}\n\nDraft a concise, professional reply from Michael's perspective. Reference his relevant B2B sales and business development experience where appropriate. Keep it under 150 words. Output only the email body, no subject line.`
+      const prompt = `You are drafting a professional email reply on behalf of ${userProfile.name}, ${userProfile.title}.\n\nINCOMING EMAIL:\nFrom: ${from}\nSubject: ${subject}\nContent: ${snippet}\n\nDraft a concise, professional reply from the candidate's perspective. Reference their relevant experience where appropriate. Keep it under 150 words. Output only the email body, no subject line.`
       const reply = await callClaude(prompt)
       setReplyDrafts(p => ({ ...p, [id]: reply }))
     } catch (e) { setReplyDrafts(p => ({ ...p, [id]: 'Failed to generate reply.' })) }
@@ -1408,56 +1463,117 @@ Return ONLY valid JSON, no markdown:
           )}
 
           {/* ── PROFILE ── */}
-          {tab === 'profile' && (
-            <div>
-              <div style={{ marginBottom: 24 }}>
-                <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.5px', marginBottom: 4 }}>My <span style={gT}>Profile</span></h1>
-                <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.36)' }}>Your professional data powering every AI feature in JobAgent.</p>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-                <div style={{ ...C.card, gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 16 }}>
-                  <div style={{ width: 52, height: 52, borderRadius: 14, background: G, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 700, color: 'white', flexShrink: 0 }}>MV</div>
+          {tab === 'profile' && (() => {
+            const pLabel = { fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', letterSpacing: 0.8, textTransform: 'uppercase', marginBottom: 6, display: 'block' }
+            const upProfile = (patch) => setUserProfile(p => ({ ...p, ...patch }))
+            const upExp = (i, patch) => setUserProfile(p => { const ex = [...p.experience]; ex[i] = { ...ex[i], ...patch }; return { ...p, experience: ex } })
+            const upLang = (i, patch) => setUserProfile(p => { const la = [...p.languages]; la[i] = { ...la[i], ...patch }; return { ...p, languages: la } })
+            const removeSkill = (s) => setUserProfile(p => ({ ...p, skills: p.skills.filter(x => x !== s) }))
+            const addSkill = () => {
+              if (!newSkillInput.trim()) return
+              setUserProfile(p => ({ ...p, skills: [...p.skills, newSkillInput.trim()] }))
+              setNewSkillInput('')
+            }
+            const addExp = () => setUserProfile(p => ({ ...p, experience: [{ company: '', role: '', period: '', loc: '', bullets: [''] }, ...p.experience] }))
+            const removeExp = (i) => setUserProfile(p => ({ ...p, experience: p.experience.filter((_, idx) => idx !== i) }))
+            const addLang = () => setUserProfile(p => ({ ...p, languages: [...p.languages, { l: '', lv: '', lb: '' }] }))
+            const removeLang = (i) => setUserProfile(p => ({ ...p, languages: p.languages.filter((_, idx) => idx !== i) }))
+            const resetProfile = () => { if (!window.confirm('Reset profile to defaults?')) return; setUserProfile({ name: MICHAEL.name, title: MICHAEL.title, email: MICHAEL.email, location: MICHAEL.location, summary: MICHAEL.summary, skills: [...MICHAEL.skills], experience: MICHAEL.experience.map(e => ({ ...e, bullets: [...e.bullets] })), languages: MICHAEL.languages.map(l => ({ ...l })), education: MICHAEL.education }); showToast('Profile reset to defaults', 2000) }
+
+            return (
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 24 }}>
                   <div>
-                    <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 2 }}>{MICHAEL.name}</div>
-                    <div style={{ fontSize: 12, ...gT, fontWeight: 600, marginBottom: 4 }}>{MICHAEL.title}</div>
-                    <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.36)' }}>{MICHAEL.location} · {MICHAEL.email}</div>
+                    <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: '-0.5px', marginBottom: 4 }}>My <span style={gT}>Profile</span></h1>
+                    <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.36)' }}>Changes save automatically and update all AI features instantly.</p>
                   </div>
+                  <button onClick={resetProfile} style={{ ...C.ghost, fontSize: 11, padding: '6px 14px' }}>Reset to defaults</button>
                 </div>
-                <div style={C.card}>
-                  <div style={C.sec}>Summary</div>
-                  <p style={{ fontSize: 11, lineHeight: 1.75, color: 'rgba(255,255,255,0.62)' }}>{MICHAEL.summary.slice(0, 260)}…</p>
-                </div>
-                <div style={C.card}>
-                  <div style={C.sec}>Languages</div>
-                  {MICHAEL.languages.map(l => (
-                    <div key={l.l} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                      <span style={{ fontWeight: 600, fontSize: 12 }}>{l.l}</span>
-                      <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.38)' }}>{l.lb} · {l.lv}</span>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+
+                  {/* Identity */}
+                  <div style={{ ...C.card, display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+                    <div style={{ width: 52, height: 52, borderRadius: 14, background: G, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 700, color: 'white', flexShrink: 0 }}>
+                      {(userProfile.name || '?')[0].toUpperCase()}
                     </div>
-                  ))}
-                </div>
-                <div style={{ ...C.card, gridColumn: '1 / -1' }}>
-                  <div style={C.sec}>Core Competencies</div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                    {MICHAEL.skills.map(s => <span key={s} style={{ fontSize: 10, padding: '4px 11px', borderRadius: 20, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.62)' }}>{s}</span>)}
+                    <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                      <div><label style={pLabel}>Full name</label><input value={userProfile.name} onChange={e => upProfile({ name: e.target.value })} style={C.inp} /></div>
+                      <div><label style={pLabel}>Title</label><input value={userProfile.title} onChange={e => upProfile({ title: e.target.value })} style={C.inp} /></div>
+                      <div><label style={pLabel}>Location</label><input value={userProfile.location} onChange={e => upProfile({ location: e.target.value })} style={C.inp} /></div>
+                      <div><label style={pLabel}>Email</label><input value={userProfile.email} onChange={e => upProfile({ email: e.target.value })} style={C.inp} /></div>
+                      <div style={{ gridColumn: '1 / -1' }}><label style={pLabel}>Education</label><input value={userProfile.education} onChange={e => upProfile({ education: e.target.value })} style={C.inp} /></div>
+                    </div>
                   </div>
-                </div>
-                <div style={{ ...C.card, gridColumn: '1 / -1' }}>
-                  <div style={C.sec}>Experience</div>
-                  {MICHAEL.experience.map((e, i) => (
-                    <div key={i} style={{ padding: '11px 0', borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 2 }}>
-                        <span style={{ fontWeight: 600, fontSize: 12 }}>{e.company}</span>
-                        <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.28)' }}>{e.period}</span>
+
+                  {/* Summary */}
+                  <div style={C.card}>
+                    <div style={C.sec}>Professional Summary</div>
+                    <textarea value={userProfile.summary} onChange={e => upProfile({ summary: e.target.value })} rows={4} style={{ ...C.inp, resize: 'vertical', lineHeight: 1.7, fontSize: 12 }} />
+                  </div>
+
+                  {/* Skills */}
+                  <div style={C.card}>
+                    <div style={C.sec}>Core Competencies</div>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                      {userProfile.skills.map(s => (
+                        <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, padding: '4px 10px', borderRadius: 20, background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.62)' }}>
+                          {s}
+                          <button onClick={() => removeSkill(s)} style={{ background: 'none', border: 'none', color: 'rgba(255,100,100,0.6)', cursor: 'pointer', padding: 0, fontSize: 10, lineHeight: 1 }}>×</button>
+                        </span>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <input value={newSkillInput} onChange={e => setNewSkillInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && addSkill()} placeholder="Add a skill…" style={{ ...C.inp, flex: 1, fontSize: 12 }} />
+                      <button onClick={addSkill} style={{ ...C.btn, fontSize: 12, padding: '9px 16px' }}>Add</button>
+                    </div>
+                  </div>
+
+                  {/* Languages */}
+                  <div style={C.card}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                      <div style={C.sec}>Languages</div>
+                      <button onClick={addLang} style={{ ...C.ghost, fontSize: 11, padding: '5px 12px' }}>+ Add</button>
+                    </div>
+                    {userProfile.languages.map((lang, i) => (
+                      <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr auto', gap: 8, marginBottom: 8, alignItems: 'center' }}>
+                        <input value={lang.l} onChange={e => upLang(i, { l: e.target.value })} placeholder="Language" style={{ ...C.inp, fontSize: 12 }} />
+                        <input value={lang.lv} onChange={e => upLang(i, { lv: e.target.value })} placeholder="Level (C2)" style={{ ...C.inp, fontSize: 12 }} />
+                        <input value={lang.lb} onChange={e => upLang(i, { lb: e.target.value })} placeholder="Label" style={{ ...C.inp, fontSize: 12 }} />
+                        <button onClick={() => removeLang(i)} style={{ background: 'none', border: 'none', color: 'rgba(248,113,113,0.6)', cursor: 'pointer', fontSize: 14, padding: '0 4px' }}>✕</button>
                       </div>
-                      <div style={{ fontSize: 11, ...gT, fontWeight: 500, marginBottom: 4 }}>{e.role}</div>
-                      <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', lineHeight: 1.6 }}>{e.bullets[0]}</div>
+                    ))}
+                  </div>
+
+                  {/* Experience */}
+                  <div style={C.card}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                      <div style={C.sec}>Experience</div>
+                      <button onClick={addExp} style={{ ...C.ghost, fontSize: 11, padding: '5px 12px' }}>+ Add</button>
                     </div>
-                  ))}
+                    {userProfile.experience.map((e, i) => (
+                      <div key={i} style={{ padding: '14px 0', borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
+                          <div><label style={pLabel}>Company</label><input value={e.company} onChange={ev => upExp(i, { company: ev.target.value })} style={{ ...C.inp, fontSize: 12 }} /></div>
+                          <div><label style={pLabel}>Role</label><input value={e.role} onChange={ev => upExp(i, { role: ev.target.value })} style={{ ...C.inp, fontSize: 12 }} /></div>
+                          <div><label style={pLabel}>Period</label><input value={e.period} onChange={ev => upExp(i, { period: ev.target.value })} placeholder="Jan 2022–Dec 2023" style={{ ...C.inp, fontSize: 12 }} /></div>
+                          <div><label style={pLabel}>Location</label><input value={e.loc || ''} onChange={ev => upExp(i, { loc: ev.target.value })} placeholder="Brussels" style={{ ...C.inp, fontSize: 12 }} /></div>
+                        </div>
+                        <div>
+                          <label style={pLabel}>Key achievement</label>
+                          <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                            <textarea value={e.bullets?.[0] || ''} onChange={ev => { const b = [...(e.bullets || [''])]; b[0] = ev.target.value; upExp(i, { bullets: b }) }} rows={2} style={{ ...C.inp, fontSize: 12, flex: 1, resize: 'vertical' }} />
+                            <button onClick={() => removeExp(i)} style={{ background: 'none', border: 'none', color: 'rgba(248,113,113,0.6)', cursor: 'pointer', fontSize: 14, padding: '8px 4px', flexShrink: 0 }}>✕</button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
                 </div>
               </div>
-            </div>
-          )}
+            )
+          })()}
 
           {/* ── FOLLOW-UPS ── */}
           {tab === 'followups' && (() => {
@@ -1466,9 +1582,11 @@ Return ONLY valid JSON, no markdown:
               'interview-thankyou':{ label: 'Interview Thank-you',   color: '#60A5FA', bg: 'rgba(96,165,250,0.12)' },
               'rejection-response':{ label: 'Rejection Response',    color: '#C084FC', bg: 'rgba(192,132,252,0.12)' },
             }
-            const pending  = followups.filter(f => f.status === 'pending')
-            const drafted  = followups.filter(f => f.status === 'drafted')
-            const sent     = followups.filter(f => f.status === 'sent')
+            const active   = followups.filter(f => !f.archived)
+            const pending  = active.filter(f => f.status === 'pending')
+            const drafted  = active.filter(f => f.status === 'drafted')
+            const sent     = active.filter(f => f.status === 'sent')
+            const archived = followups.filter(f => f.archived)
             const weekAgo  = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10)
             const sentThisWeek = sent.filter(f => f.createdAt >= weekAgo).length
             const responseRate = sent.length === 0 ? 0 : Math.round((sent.filter(f => apps.find(a => a.id === f.appId)?.status === 'Interview').length / sent.length) * 100)
@@ -1618,7 +1736,7 @@ Return ONLY valid JSON, no markdown:
                   </div>
                 )}
 
-                {followups.length === 0 && (
+                {active.length === 0 && (
                   <div style={{ ...C.card, textAlign: 'center', padding: 52 }}>
                     <div style={{ fontSize: 36, marginBottom: 12 }}>✉</div>
                     <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 8 }}>No follow-ups yet</div>
@@ -1626,6 +1744,33 @@ Return ONLY valid JSON, no markdown:
                       Follow-ups are auto-detected from your Applications tracker — applied 7+ days ago, interviews, and rejections will appear here automatically.
                     </div>
                   </div>
+                )}
+
+                {/* Archived follow-ups */}
+                {archived.length > 0 && (
+                  <details style={{ marginTop: 8 }}>
+                    <summary style={{ cursor: 'pointer', fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', letterSpacing: 1.5, textTransform: 'uppercase', listStyle: 'none', display: 'flex', alignItems: 'center', gap: 8, paddingBottom: 12 }}>
+                      ▸ Archived <span style={{ color: 'rgba(255,255,255,0.2)' }}>{archived.length}</span>
+                    </summary>
+                    <div style={{ marginTop: 4 }}>
+                      {archived.map(fu => {
+                        const meta = FU_TYPE[fu.type] || FU_TYPE['applied-followup']
+                        return (
+                          <div key={fu.id} style={{ ...C.card, marginBottom: 8, opacity: 0.55, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 600 }}>{fu.company}</div>
+                              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>{fu.role}</div>
+                              <span style={{ fontSize: 10, fontWeight: 600, padding: '2px 7px', borderRadius: 20, background: meta.bg, color: meta.color, display: 'inline-block', marginTop: 5 }}>{meta.label}</span>
+                            </div>
+                            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+                              <button onClick={() => { updStatus(fu.appId, 'Applied') }} style={{ ...C.ghost, fontSize: 11, padding: '5px 12px' }}>Restore</button>
+                              <button onClick={() => setFollowups(p => p.filter(f => f.id !== fu.id))} style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.25)', fontSize: 11, cursor: 'pointer', padding: '5px 0' }}>✕</button>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </details>
                 )}
               </div>
             )
@@ -2187,7 +2332,7 @@ Return ONLY valid JSON, no markdown:
           {tab === 'negotiation' && (() => {
             const offerApps = apps.filter(a => a.status === 'Offer' || a.status === 'Negotiation')
             const LEVELS = ['Junior', 'Mid', 'Senior', 'Lead', 'Manager', 'Director']
-            const INDUSTRIES = ['SaaS', 'Fintech', 'Real Estate', 'Consulting', 'E-commerce', 'HealthTech', 'HR Tech', 'Other']
+            const INDUSTRIES = ['SaaS', 'Finance', 'Technology', 'Healthcare', 'Real Estate', 'E-commerce', 'Consulting', 'Manufacturing']
             const SENTIMENTS = [
               { value: 'open',       label: "They're open",    color: '#34D399' },
               { value: 'firm',       label: "They're firm",    color: '#F87171' },
@@ -2272,22 +2417,20 @@ Return ONLY valid JSON, no markdown:
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
 
                                   {/* Row 1: Monthly + Yearly */}
-                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                                     <div>
-                                      <label style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', marginBottom: 6, display: 'block', letterSpacing: 0.8, textTransform: 'uppercase' }}>Monthly salary (brut)</label>
-                                      <input type="number" value={neg.monthlyBrut} onChange={e => {
-                                        const m = e.target.value
-                                        const y = m !== '' ? String(Math.round(Number(m) * 12)) : ''
-                                        setSalaryNegotiations(p => ({ ...p, [app.id]: { ...p[app.id], monthlyBrut: m, yearlyGross: y } }))
-                                      }} placeholder="6250" style={{ ...C.inp }} />
+                                      <label style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', marginBottom: 8, display: 'block', letterSpacing: 0.8, textTransform: 'uppercase' }}>Monthly salary (brut €)</label>
+                                      <input type="number" value={neg.monthlyBrut || ''} onChange={e => {
+                                        const m = +e.target.value || 0
+                                        setSalaryNegotiations(p => ({ ...p, [app.id]: { ...p[app.id], monthlyBrut: m, yearlyGross: Math.round(m * 12) } }))
+                                      }} placeholder="0" style={{ ...C.inp }} />
                                     </div>
                                     <div>
-                                      <label style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', marginBottom: 6, display: 'block', letterSpacing: 0.8, textTransform: 'uppercase' }}>Yearly salary</label>
-                                      <input type="number" value={neg.yearlyGross} onChange={e => {
-                                        const y = e.target.value
-                                        const m = y !== '' ? String(Math.round(Number(y) / 12)) : ''
-                                        setSalaryNegotiations(p => ({ ...p, [app.id]: { ...p[app.id], yearlyGross: y, monthlyBrut: m } }))
-                                      }} placeholder="75000" style={{ ...C.inp }} />
+                                      <label style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', marginBottom: 8, display: 'block', letterSpacing: 0.8, textTransform: 'uppercase' }}>Yearly salary (€)</label>
+                                      <input type="number" value={neg.yearlyGross || ''} onChange={e => {
+                                        const y = +e.target.value || 0
+                                        setSalaryNegotiations(p => ({ ...p, [app.id]: { ...p[app.id], yearlyGross: y, monthlyBrut: Math.round(y / 12) } }))
+                                      }} placeholder="0" style={{ ...C.inp }} />
                                     </div>
                                   </div>
 
@@ -2309,8 +2452,11 @@ Return ONLY valid JSON, no markdown:
                                   <div>
                                     <label style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', marginBottom: 6, display: 'block', letterSpacing: 0.8, textTransform: 'uppercase' }}>Industry</label>
                                     <select value={neg.industry} onChange={e => setSalaryNegotiations(p => ({ ...p, [app.id]: { ...p[app.id], industry: e.target.value } }))} style={{ ...C.inp, color: 'white', backgroundColor: '#0e0e1a', appearance: 'auto', width: '100%' }}>
-                                      {INDUSTRIES.map(i => <option key={i} value={i} style={{ background: '#0e0e1a', color: 'white' }}>{i}</option>)}
+                                      {[...INDUSTRIES, 'Other'].map(i => <option key={i} value={i} style={{ background: '#0e0e1a', color: 'white' }}>{i === 'Other' ? 'Other (custom)' : i}</option>)}
                                     </select>
+                                    {neg.industry === 'Other' && (
+                                      <input value={neg.customIndustry || ''} onChange={e => setSalaryNegotiations(p => ({ ...p, [app.id]: { ...p[app.id], customIndustry: e.target.value } }))} placeholder="Enter your industry…" style={{ ...C.inp, marginTop: 8, width: '100%' }} />
+                                    )}
                                   </div>
 
                                   {/* Row 4: Benefits full width */}
