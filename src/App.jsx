@@ -1397,7 +1397,7 @@ Return ONLY valid JSON, no markdown:
                       {a.notes && <div style={{ fontSize: 10, color: 'rgba(255,255,255,0.24)', marginTop: 1, fontStyle: 'italic' }}>{a.notes}</div>}
                     </div>
                     <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.26)', flexShrink: 0 }}>{a.date}</span>
-                    {followups.some(f => f.appId === a.id && (f.status === 'pending' || f.status === 'drafted')) && (
+                    {(a.status === 'Applied' || a.status === 'Interview') && followups.some(f => f.appId === a.id && !f.archived && (f.status === 'pending' || f.status === 'drafted')) && (
                       <span title="Follow-up pending" style={{ fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 20, background: 'rgba(251,146,60,0.15)', color: '#FB923C', flexShrink: 0, whiteSpace: 'nowrap' }}>↗ Follow-up</span>
                     )}
                     <select value={a.status} onChange={e => updStatus(a.id, e.target.value)} style={{ background: ST[a.status]?.b, border: 'none', borderRadius: 20, padding: '3px 10px', color: ST[a.status]?.c, fontWeight: 600, fontSize: 10, cursor: 'pointer', fontFamily: 'inherit', outline: 'none' }}>
@@ -1601,11 +1601,21 @@ Return ONLY valid JSON, no markdown:
               const [localTo,      setLocalTo]      = useState(fu.recipientEmail || '')
               const [localSubject, setLocalSubject] = useState(fu.draftedEmail?.subject || '')
               const [localBody,    setLocalBody]    = useState(fu.draftedEmail?.body    || '')
+              const [manualMode,   setManualMode]   = useState(false)
+              const [manualTo,     setManualTo]     = useState('')
+              const [manualSubject,setManualSubject]= useState('')
+              const [manualBody,   setManualBody]   = useState('')
 
               // Sync local state when draftedEmail changes (e.g. after AI draft completes)
               useEffect(() => { setLocalSubject(fu.draftedEmail?.subject || '') }, [fu.draftedEmail?.subject])
               useEffect(() => { setLocalBody(fu.draftedEmail?.body    || '') }, [fu.draftedEmail?.body])
               useEffect(() => { setLocalTo(fu.recipientEmail || '') },           [fu.recipientEmail])
+
+              const saveManualDraft = () => {
+                setFollowups(p => p.map(f => f.id === fu.id ? { ...f, recipientEmail: manualTo, draftedEmail: { subject: manualSubject, body: manualBody }, status: 'drafted' } : f))
+                setManualMode(false)
+                setFuExpanded(p => ({ ...p, [fu.id]: true }))
+              }
               return (
                 <div style={{ ...C.card, marginBottom: 12 }}>
                   <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 10 }}>
@@ -1651,20 +1661,40 @@ Return ONLY valid JSON, no markdown:
                         value={localBody}
                         onChange={e => setLocalBody(e.target.value)}
                         onBlur={e => updateFollowupDraft(fu.id, 'body', e.target.value)}
-                        rows={8}
-                        style={{ ...C.inp, fontSize: 12, resize: 'vertical', lineHeight: 1.6 }}
+                        style={{ ...C.inp, fontSize: 12, resize: 'vertical', lineHeight: 1.6, minHeight: 280, height: 280 }}
                       />
+                    </div>
+                  )}
+
+                  {/* Manual draft form */}
+                  {manualMode && (
+                    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 10, padding: 14, marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>To: Recruiter Email</div>
+                      <input value={manualTo} onChange={e => setManualTo(e.target.value)} placeholder="recruiter@company.com" autoComplete="off" data-form-type="other" style={{ ...C.inp, fontSize: 12, marginBottom: 10 }} />
+                      <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Subject</div>
+                      <input value={manualSubject} onChange={e => setManualSubject(e.target.value)} placeholder="Follow-up: Application for..." autoComplete="off" data-form-type="other" style={{ ...C.inp, fontSize: 12, marginBottom: 10 }} />
+                      <div style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.3)', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 6 }}>Body</div>
+                      <textarea value={manualBody} onChange={e => setManualBody(e.target.value)} placeholder={`Dear Hiring Manager,\n\nI am writing to follow up on my application for the ${fu.role} role at ${fu.company}...\n\nBest regards,\n${userProfile.name}`} style={{ ...C.inp, fontSize: 12, resize: 'vertical', lineHeight: 1.6, minHeight: 280, height: 280 }} />
+                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                        <button onClick={saveManualDraft} style={{ ...C.btn, fontSize: 11, padding: '7px 14px' }}>↗ Save Draft</button>
+                        <button onClick={() => setManualMode(false)} style={{ ...C.ghost, fontSize: 11, padding: '7px 14px' }}>← Cancel</button>
+                      </div>
                     </div>
                   )}
 
                   {/* Action buttons */}
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    {fu.status !== 'sent' && (
-                      <button onClick={() => draftFollowup(fu.id)} disabled={isDrafting} style={{ ...C.btn, fontSize: 11, padding: '7px 14px', opacity: isDrafting ? 0.6 : 1 }}>
-                        {isDrafting ? '↻ Drafting…' : '✦ Draft with AI'}
-                      </button>
+                    {fu.status !== 'sent' && !manualMode && (
+                      <>
+                        <button onClick={() => draftFollowup(fu.id)} disabled={isDrafting} style={{ ...C.btn, fontSize: 11, padding: '7px 14px', opacity: isDrafting ? 0.6 : 1 }}>
+                          {isDrafting ? '↻ Drafting…' : '✦ Draft with AI'}
+                        </button>
+                        <button onClick={() => { setManualMode(true); setManualTo(fu.recipientEmail || ''); setManualSubject(`Follow-up: ${fu.role} at ${fu.company}`); setManualBody('') }} style={{ ...C.ghost, fontSize: 11, padding: '7px 14px' }}>
+                          ✎ Write manually
+                        </button>
+                      </>
                     )}
-                    {fu.draftedEmail && fu.status !== 'sent' && (
+                    {fu.draftedEmail && fu.status !== 'sent' && !manualMode && (
                       <>
                         <button onClick={() => setFuExpanded(p => ({ ...p, [fu.id]: !p[fu.id] }))} style={{ ...C.ghost, fontSize: 11, padding: '7px 14px' }}>
                           {isExpanded ? 'Hide Draft' : 'Review Draft'}
